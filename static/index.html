@@ -1706,11 +1706,9 @@ async function loadAccounts() {
         const allInGroup = accounts.filter(x => x.id === primaryCard.id || x.shared_limit_account_id === primaryCard.id);
         const combinedOutstanding = allInGroup.reduce((s, x) => s + (x.outstanding || 0), 0);
         const combinedAvailable = primaryCard.credit_limit - combinedOutstanding;
-        const combinedSpend = allInGroup.reduce((s, x) => s + (x.month_spend || 0), 0);
         const util = combinedOutstanding / primaryCard.credit_limit * 100;
         const availClass = util > 85 ? 'critical' : util > 65 ? 'low' : '';
         const barColor = util > 85 ? 'var(--red)' : util > 65 ? 'var(--yellow)' : 'var(--green)';
-        const hasAddons = allInGroup.length > 1;
         ccBlock = `
           <div class="cc-util-row">
             <span class="cc-util-label">Available</span>
@@ -1720,11 +1718,8 @@ async function loadAccounts() {
             <div class="acc-progress-fill" style="width:${Math.min(util,100).toFixed(1)}%;background:${barColor}"></div>
           </div>
           <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:11px;color:var(--muted)">
-            <span>&#8377;${fmt(a.outstanding)} used</span>
+            <span>&#8377;${fmt(combinedOutstanding)} used</span>
             <span>&#8377;${fmt(primaryCard.credit_limit)} limit</span>
-          </div>
-          <div style="margin-top:6px;font-size:11px;color:var(--muted)">
-            This month: &#8377;${fmt(combinedSpend)}${hasAddons ? ' <span style="opacity:.7">(all cards)</span>' : ''}
           </div>`;
       }
     }
