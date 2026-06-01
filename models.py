@@ -269,21 +269,7 @@ def init_db():
 
 
 def _seed(eng):
-    from sqlalchemy import text, inspect as sql_inspect
     from sqlalchemy.orm import Session
-    # ── Inline column migrations (idempotent) ───────────────────────────────
-    inspector = sql_inspect(eng)
-    existing_cols = {c["name"] for c in inspector.get_columns("accounts")}
-    with eng.begin() as conn:
-        if "credit_limit" not in existing_cols:
-            conn.execute(text("ALTER TABLE accounts ADD COLUMN credit_limit FLOAT"))
-        if "shared_limit_account_id" not in existing_cols:
-            conn.execute(text(
-                "ALTER TABLE accounts ADD COLUMN shared_limit_account_id INTEGER"
-                " REFERENCES accounts(id)"
-            ))
-        if "is_protected" not in existing_cols:
-            conn.execute(text("ALTER TABLE accounts ADD COLUMN is_protected BOOLEAN DEFAULT FALSE NOT NULL"))
     with Session(eng) as s:
         if s.query(Category).count() == 0:
             s.add_all([
