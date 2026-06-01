@@ -90,7 +90,15 @@
     align-items: center;
     gap: 10px;
   }
-  .sidebar-head img { height: 24px; }
+  .brand {
+    font-family: var(--font-head);
+    font-size: 22px;
+    font-weight: 400;
+    letter-spacing: -.4px;
+    color: var(--accent);
+    line-height: 1;
+  }
+  .brand-dot { color: var(--accent2); }
 
   .sidebar-section {
     padding: 10px 12px 4px;
@@ -787,7 +795,7 @@
 
   <nav class="sidebar" id="sidebar">
     <div class="sidebar-head">
-      <img src="/static/logo.svg" alt="Hisaab">
+      <span class="brand">Hisaab<span class="brand-dot">.</span></span>
     </div>
 
     <div class="sidebar-section">

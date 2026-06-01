@@ -98,6 +98,15 @@
     margin-bottom: 36px;
     text-decoration: none;
   }
+  .brand {
+    font-family: var(--font-head);
+    font-size: 24px;
+    font-weight: 400;
+    letter-spacing: -.4px;
+    color: var(--accent);
+    line-height: 1;
+  }
+  .brand-dot { color: var(--accent2); }
 
   /* Card */
   .card {
@@ -294,7 +303,7 @@
 
 <div class="page-wrap">
   <a class="logo-wrap" href="/">
-    <img src="/static/logo.svg" alt="Hisaab" height="26">
+    <span class="brand">Hisaab<span class="brand-dot">.</span></span>
   </a>
 
   <div class="card">
@@ -405,7 +414,11 @@
     $('otp-platform').textContent = cap(platform);
     document.querySelectorAll('.channel-btn').forEach(b => b.classList.remove('active'));
     event.target.classList.add('active');
-    await sendOTP(platform);
+    try {
+      await sendOTP(platform);
+    } catch (e) {
+      showError('otp-error', e.message || 'Could not send to that channel.');
+    }
   }
 
   async function sendOTP(platform = null) {
@@ -416,6 +429,7 @@
       body: JSON.stringify(body),
     });
     const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Delivery failed');
     if (data.sent_to) {
       currentPlatform = data.sent_to;
       $('otp-platform').textContent = cap(data.sent_to);
@@ -434,9 +448,21 @@
     btn.disabled = true; btn.textContent = 'Sending\u2026';
     try {
       currentEmail = email;
-      const data = await sendOTP();
+      const res = await fetch('/api/auth/web/request-otp', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: currentEmail }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showError('email-error', data.detail || 'Could not send code. Is your Telegram bot set up?');
+        return;
+      }
+      if (!data.sent_to) {
+        showError('email-error', 'No bot linked to this email. Please sign up via the Telegram bot first.');
+        return;
+      }
       currentPlatform = data.sent_to;
-      $('otp-platform').textContent = data.sent_to ? cap(data.sent_to) : 'bot';
+      $('otp-platform').textContent = cap(data.sent_to);
       await loadChannels(email);
       setStep('otp');
       setTimeout(() => $('otp-input').focus(), 100);
@@ -474,7 +500,25 @@
   async function resendOTP() {
     $('otp-input').value = '';
     clearError('otp-error');
-    await sendOTP(currentPlatform);
+    const link = event.target;
+    const orig = link.textContent;
+    link.style.pointerEvents = 'none';
+    link.textContent = 'Sending\u2026';
+    try {
+      await sendOTP(currentPlatform);
+      link.textContent = 'Sent!';
+      link.style.color = 'var(--green)';
+      setTimeout(() => {
+        link.textContent = orig;
+        link.style.color = '';
+        link.style.pointerEvents = '';
+      }, 3000);
+    } catch (e) {
+      showError('otp-error', e.message || 'Could not resend. Please try again.');
+      link.textContent = orig;
+      link.style.color = '';
+      link.style.pointerEvents = '';
+    }
   }
 
   function resetToEmail() {

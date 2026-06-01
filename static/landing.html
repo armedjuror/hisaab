@@ -65,6 +65,15 @@
     align-items: center;
     text-decoration: none;
   }
+  .brand {
+    font-family: var(--font-head);
+    font-size: 22px;
+    font-weight: 400;
+    letter-spacing: -.4px;
+    color: var(--accent);
+    line-height: 1;
+  }
+  .brand-dot { color: var(--accent2); }
   .nav-right { display: flex; gap: 8px; align-items: center; }
   .nav-link {
     color: var(--text2);
@@ -493,7 +502,7 @@
 <!-- Nav -->
 <nav>
   <a class="nav-logo" href="/">
-    <img src="/static/logo.svg" alt="Hisaab" height="26">
+    <span class="brand">Hisaab<span class="brand-dot">.</span></span>
   </a>
   <div class="nav-right">
     <a class="nav-link" href="/api/docs">API Docs</a>
@@ -645,7 +654,7 @@
 
 <!-- Footer -->
 <footer>
-  <span><img src="/static/logo.svg" alt="Hisaab" height="22"></span>
+  <span class="brand" style="font-size:20px">Hisaab<span class="brand-dot">.</span></span>
   <p>by <a href="https://makeyourreps.com">Make Your Reps</a></p>
 </footer>
 

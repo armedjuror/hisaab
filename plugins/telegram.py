@@ -144,11 +144,19 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
             log.warning("TELEGRAM_BOT_TOKEN not set — skipping send")
             return
         async with httpx.AsyncClient() as client:
-            await client.post(
+            r = await client.post(
                 f"https://api.telegram.org/bot{self._token}/sendMessage",
                 json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
                 timeout=10,
             )
+        data = r.json()
+        if not data.get("ok"):
+            log.error(
+                "Telegram sendMessage failed for chat_id=%s: %s",
+                chat_id,
+                data.get("description", data),
+            )
+            raise RuntimeError(data.get("description", "Telegram delivery failed"))
 
     async def handle(self, msg: InboundMessage, db: Session) -> None:
         # Auth gate — handles signup/OTP flow; returns User or None

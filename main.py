@@ -168,12 +168,23 @@ async def web_request_otp(data: WebOTPRequest, db: Session = Depends(get_db)):
         from plugins.registry import get as get_plugin
         plugin = get_plugin(target.platform)
         if plugin:
-            await plugin.send_message(
-                target.chat_id,
-                f"Your Hisaab web login code:\n\n*{otp}*\n\nExpires in 10 minutes.",
-            )
+            try:
+                await plugin.send_message(
+                    target.chat_id,
+                    f"Your Hisaab web login code:\n\n*{otp}*\n\nExpires in 10 minutes.",
+                )
+            except Exception as exc:
+                import logging as _log
+                _log.getLogger(__name__).error("OTP delivery failed: %s", exc)
+                raise HTTPException(503, f"Could not deliver OTP: {exc}")
+        else:
+            raise HTTPException(503, "Bot plugin not available")
+    else:
+        # No bot identity linked — still return ok so email enumeration isn't possible,
+        # but tell the frontend nothing was sent
+        return {"ok": True, "sent_to": None}
 
-    return {"ok": True, "sent_to": target.platform if target else None}
+    return {"ok": True, "sent_to": target.platform}
 
 
 @app.post("/api/auth/web/verify-otp", include_in_schema=False)
