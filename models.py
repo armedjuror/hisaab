@@ -165,6 +165,8 @@ class Account(Base):
     )
     shared_limit_cards = relationship(
         "Account", foreign_keys="Account.shared_limit_account_id",
+        primaryjoin="Account.id == Account.shared_limit_account_id",
+        remote_side="Account.id",
         backref="shared_limit_primary"
     )
 

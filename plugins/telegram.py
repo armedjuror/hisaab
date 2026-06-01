@@ -202,8 +202,7 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
                     ocr_text = await self.ocr_photo(photo[-1]["file_id"])
                     if ocr_text:
                         caption = msg.raw.get("message", {}).get("caption", "")
-                        msg.text = (caption + "
-" + ocr_text).strip() if caption else ocr_text
+                        msg.text = (caption + "\n" + ocr_text).strip() if caption else ocr_text
                         log.info("OCR extracted: %s", msg.text[:100])
                     else:
                         await self.send_message(msg.chat_id, "Couldn't read the image. Try typing the amount instead.")
