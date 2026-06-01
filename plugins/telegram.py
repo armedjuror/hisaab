@@ -103,7 +103,8 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
         return None
 
     async def transcribe_voice(self, file_id: str) -> str | None:
-        """Download a Telegram voice/audio file and transcribe it with Whisper."""
+        """Download a Telegram voice/audio file and transcribe it with Whisper (runs in thread pool)."""
+        import asyncio
         import tempfile, os
         url = await self._get_file_path(file_id)
         if not url:
@@ -117,12 +118,13 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
             tmp_path = f.name
         try:
             from services import transcribe_audio
-            return transcribe_audio(tmp_path)
+            return await asyncio.get_event_loop().run_in_executor(None, transcribe_audio, tmp_path)
         finally:
             os.unlink(tmp_path)
 
     async def ocr_photo(self, file_id: str) -> str | None:
-        """Download a Telegram photo and extract text via local Tesseract OCR."""
+        """Download a Telegram photo and extract text via RapidOCR (runs in thread pool)."""
+        import asyncio
         import tempfile, os
         url = await self._get_file_path(file_id)
         if not url:
@@ -135,7 +137,7 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
             tmp_path = f.name
         try:
             from services import ocr_image
-            return ocr_image(tmp_path)
+            return await asyncio.get_event_loop().run_in_executor(None, ocr_image, tmp_path)
         finally:
             os.unlink(tmp_path)
 
