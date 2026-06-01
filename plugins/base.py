@@ -119,20 +119,71 @@ class BasePlugin(ABC):
         if not re.search(r"\baccounts?\b|/accounts", text):
             return None
 
-        # Management intent — redirect to dashboard
-        if re.search(r"\b(close|delete|deactivate|remove|cancel|disable)\b", text):
-            return "To delete your account permanently, go to the dashboard → sidebar → *Delete account*."
+        # Defer delete-all and create to the async handler below
+        if re.search(r"\b(delete|remove|clear|reset)\b.*(all|every)", text) or \
+           re.search(r"(all|every).*(delete|remove|clear|reset)\b.*account", text):
+            return None  # handled by maybe_manage_accounts
+
+        if re.search(r"\b(add|create|new)\b", text):
+            return None  # handled by maybe_manage_accounts
 
         from services import get_accounts
         accounts = get_accounts(db, user_id=msg.user_id)
         if not accounts:
-            return "You have no accounts yet. Add one from the dashboard."
+            return "You have no accounts yet. Say *add [name] as [type] account* to create one."
 
         lines = ["*Your accounts:*\n"]
         for a in accounts:
             type_label = str(a['type']).split('.')[-1].replace('_', ' ').title()
             lines.append(f"  • *{a['name']}* ({type_label}) — ₹{a['balance']:,.2f}")
         return "\n".join(lines)
+
+    async def maybe_manage_accounts(self, msg: InboundMessage, db) -> Optional[str]:  # noqa: F821
+        """
+        Handle account creation and bulk deletion via bot.
+        Returns a response string if handled, None otherwise.
+        """
+        import re
+        text = (msg.text or "").strip().lower()
+
+        # ── Delete all accounts ───────────────────────────────────────────
+        is_delete_all = bool(
+            re.search(r"\b(delete|remove|clear|reset)\b.*(all|every)", text) or
+            re.search(r"(all|every).*(delete|remove|clear|reset).*account", text)
+        )
+        if is_delete_all:
+            from services import delete_all_user_accounts
+            count = delete_all_user_accounts(db, msg.user_id)
+            if count == 0:
+                return "You have no accounts to delete. Say *add [name] as [type] account* to create one."
+            return (
+                f"✅ Deleted {count} account{'s' if count != 1 else ''}.\n\n"
+                "Now tell me what accounts to add — e.g. *add HDFC Savings as bank account*."
+            )
+
+        # ── Create account ────────────────────────────────────────────────
+        is_create = bool(re.search(r"\b(add|create|new)\b", text) and re.search(r"\baccount\b", text))
+        if not is_create:
+            return None
+
+        from services import parse_account_with_ai, create_account
+        parsed = parse_account_with_ai(msg.text or "")
+        if not parsed.valid:
+            return (
+                f"I couldn't parse that. Please say something like:\n"
+                f"*add HDFC Savings as bank account*\n"
+                f"Types: bank, credit card, cash, wallet, metro card, loan"
+            )
+
+        try:
+            from models import AccountType
+            acc_type = AccountType(parsed.type)
+        except ValueError:
+            return f"Unknown account type *{parsed.type}*. Try: bank, credit card, cash, wallet, metro card, loan."
+
+        create_account(db, name=parsed.name, type=acc_type, user_id=msg.user_id)
+        type_label = parsed.type.replace('_', ' ').title()
+        return f"✅ Created *{parsed.name}* ({type_label})."
 
     def maybe_list_categories(self, msg: InboundMessage, db) -> Optional[str]:  # noqa: F821
         """Returns formatted category list if the message asks for categories, else None."""

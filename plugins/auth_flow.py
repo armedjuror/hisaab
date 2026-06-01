@@ -11,9 +11,9 @@ awaiting_merge_otp  Email belongs to existing account; OTP sent to their
 
 Commands
 --------
-/login              Re-trigger OTP to the current channel (session expired)
-/login <platform>   Send OTP to a different linked bot (e.g. /login telegram)
-/login list         Show which bots are linked to your account
+/channels           List all bots/channels linked to your account
+
+Login codes are sent automatically when your session expires — no manual command needed.
 
 Usage in a plugin::
 
@@ -53,11 +53,9 @@ class AuthFlowMixin:
         chat_id  = msg.chat_id
         text     = (msg.text or "").strip()
 
-        # ── /login command handling ────────────────────────────────────────
-        if text.lower().startswith("/login"):
-            parts = text.split()
-            arg   = parts[1].lower() if len(parts) > 1 else None
-            return await self._handle_login_command(platform, chat_id, arg, db)
+        # ── /channels command ─────────────────────────────────────────────
+        if text.lower() == "/channels":
+            return await self._handle_channels_command(platform, chat_id, db)
 
         # ── In-progress conversation state ─────────────────────────────────
         state_row = auth_service.get_bot_state(platform, chat_id, db)
@@ -70,6 +68,8 @@ class AuthFlowMixin:
                 return await self._handle_otp(msg, db, state_row)
             if state_row.state == "awaiting_merge_otp":
                 return await self._handle_merge_otp(msg, db, state_row)
+            if state_row.state == "awaiting_accounts_setup":
+                return await self._handle_accounts_setup(msg, db, state_row)
 
         # ── No in-progress state — check if user is known ──────────────────
         user = auth_service.get_user_by_bot(platform, chat_id, db)
@@ -91,41 +91,23 @@ class AuthFlowMixin:
         await self._send_otp_here(user, platform, chat_id, db)
         return None
 
-    # ── /login command ─────────────────────────────────────────────────────
+    # ── /channels command ──────────────────────────────────────────────────
 
-    async def _handle_login_command(
-        self, platform: str, chat_id: str, arg: Optional[str], db: Session
+    async def _handle_channels_command(
+        self, platform: str, chat_id: str, db: Session
     ) -> Optional[User]:
         user = auth_service.get_user_by_bot(platform, chat_id, db)
-
         if user is None:
-            # Unknown user — start signup instead
-            await self.send_message(chat_id, "Welcome! What's your name?")
+            await self.send_message(chat_id, "You're not signed up yet. What's your name?")
             auth_service.set_bot_state(platform, chat_id, "awaiting_name", db)
             return None
-
-        if arg == "list":
-            identities = auth_service.get_user_bot_identities(user.id, db)
-            platforms  = ", ".join(i.platform for i in identities)
-            await self.send_message(
-                chat_id,
-                f"Your linked bots: *{platforms}*\n\nTo receive OTP on a specific bot: /login <name>\n"
-                f"Supported: {', '.join(sorted(SUPPORTED_PLUGINS))}",
-            )
-            return None
-
-        if arg and arg != platform:
-            if arg not in SUPPORTED_PLUGINS:
-                await self.send_message(
-                    chat_id,
-                    f"*{arg}* is not a supported bot.\nSupported: {', '.join(sorted(SUPPORTED_PLUGINS))}",
-                )
-                return None
-            # User wants OTP on a different linked bot
-            return await self._send_otp_to_other_platform(user, platform, chat_id, arg, db)
-
-        # Default: send OTP here
-        await self._send_otp_here(user, platform, chat_id, db)
+        identities = auth_service.get_user_bot_identities(user.id, db)
+        lines = "\n".join(f"  • {i.platform.capitalize()}" for i in identities)
+        await self.send_message(
+            chat_id,
+            f"*Your linked channels:*\n{lines}\n\n"
+            f"Available: {', '.join(sorted(SUPPORTED_PLUGINS))}",
+        )
         return None
 
     # ── Signup step handlers ───────────────────────────────────────────────
@@ -172,8 +154,19 @@ class AuthFlowMixin:
         user = auth_service.create_user(name=name, email=email, primary_bot=platform, db=db)
         auth_service.link_bot_identity(user.id, platform, chat_id, db)
         auth_service.create_session(user.id, db)
-        auth_service.clear_bot_state(platform, chat_id, db)
-        await self.send_message(chat_id, self.welcome_text(user))
+        # Create protected Cash account
+        from services import create_account
+        from models import AccountType
+        create_account(db, name="Cash", type=AccountType.cash, user_id=user.id, is_protected=True)
+        # Move to account setup state
+        auth_service.set_bot_state(platform, chat_id, "awaiting_accounts_setup", db, user_id=user.id)
+        await self.send_message(
+            chat_id,
+            f"✅ Welcome, *{user.name}*! Your *Cash* account is ready.\n\n"
+            "Now tell me what other accounts you use — one at a time.\n"
+            "Examples: *HDFC Savings bank*, *HDFC Credit Card*, *Amazon Pay wallet*\n\n"
+            "Say *done* when finished.",
+        )
         return None  # don't parse the email text as a transaction
 
     async def _handle_otp(
@@ -194,6 +187,51 @@ class AuthFlowMixin:
         auth_service.clear_bot_state(platform, chat_id, db)
         user = db.query(User).get(state_row.user_id)
         await self.send_message(chat_id, f"✅ Logged in as *{user.name}*. What would you like to log?")
+        return None
+
+    async def _handle_accounts_setup(
+        self, msg: InboundMessage, db: Session, state_row
+    ) -> Optional[User]:
+        """Collect the user's spending accounts during onboarding, one per message."""
+        platform = self.name
+        chat_id  = msg.chat_id
+        text     = (msg.text or "").strip()
+
+        DONE_WORDS = {"done", "skip", "no", "nothing", "finish", "ok", "okay", "that's all", "thats all", "stop"}
+        if text.lower() in DONE_WORDS:
+            user = auth_service.get_user_by_bot(platform, chat_id, db)
+            auth_service.clear_bot_state(platform, chat_id, db)
+            await self.send_message(chat_id, self.welcome_text(user))
+            return None
+
+        from services import parse_account_with_ai, create_account
+        from models import AccountType
+        parsed = parse_account_with_ai(text)
+        if not parsed.valid:
+            await self.send_message(
+                chat_id,
+                "I didn't quite get that. Try something like *HDFC Savings bank* or *HDFC Credit Card*.\n"
+                "Say *done* when finished.",
+            )
+            return None
+
+        try:
+            acc_type = AccountType(parsed.type)
+        except ValueError:
+            await self.send_message(
+                chat_id,
+                f"Unknown type *{parsed.type}*. Try: bank, credit card, cash, wallet, metro card, loan.\n"
+                "Say *done* when finished.",
+            )
+            return None
+
+        user = auth_service.get_user_by_bot(platform, chat_id, db)
+        create_account(db, name=parsed.name, type=acc_type, user_id=user.id)
+        type_label = parsed.type.replace("_", " ").title()
+        await self.send_message(
+            chat_id,
+            f"✅ Added *{parsed.name}* ({type_label}).\n\nAnything else? Say *done* when finished.",
+        )
         return None
 
     # ── Merge / cross-plugin verification ─────────────────────────────────
@@ -312,44 +350,6 @@ class AuthFlowMixin:
             f"Your login code is:\n\n*{otp}*\n\nIt expires in 10 minutes.",
         )
         auth_service.set_bot_state(platform, chat_id, "awaiting_otp", db, user_id=user.id)
-
-    async def _send_otp_to_other_platform(
-        self, user: User, current_platform: str, current_chat_id: str,
-        target_platform: str, db: Session
-    ) -> Optional[User]:
-        """Route OTP to a different linked bot when user explicitly requests it."""
-        identities = auth_service.get_user_bot_identities(user.id, db)
-        target = next((i for i in identities if i.platform == target_platform), None)
-
-        if target is None:
-            linked = ", ".join(i.platform for i in identities)
-            await self.send_message(
-                current_chat_id,
-                f"You don't have *{target_platform}* linked to your account.\n"
-                f"Linked bots: *{linked}*",
-            )
-            return None
-
-        otp  = auth_service.generate_otp(user.id, db)
-        sent = await self._deliver_otp_to_identity(target, otp, user.email)
-
-        if not sent:
-            await self.send_message(
-                current_chat_id,
-                f"The *{target_platform}* bot isn't available right now. "
-                f"Sending the code here instead.",
-            )
-            await self._send_otp_here(user, current_platform, current_chat_id, db)
-            return None
-
-        await self.send_message(
-            current_chat_id,
-            f"Code sent to your *{target_platform}* bot. Enter it here to log in.",
-        )
-        auth_service.set_bot_state(
-            current_platform, current_chat_id, "awaiting_otp", db, user_id=user.id
-        )
-        return None
 
     async def _deliver_otp_to_identity(self, identity, otp: str, email: str) -> bool:
         """

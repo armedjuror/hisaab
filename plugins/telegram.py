@@ -12,7 +12,8 @@ Setup:
     # Note: router prefix is /telegram, mounted under /plugins → full path: /plugins/telegram/webhook
 
 Commands:
-    /login  — request a new OTP (e.g. after session expiry)
+    /channels  — list linked bots/channels
+    /help      — show all commands
 """
 
 import logging
@@ -76,9 +77,12 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
             "  /report last — last month\n"
             "  /report jan — January (add year: `jan 2024`)\n"
             "  /report trend — 6-month spending trend\n\n"
-            "*Account:*\n"
-            "  /login — request a new login code\n"
-            "  /login list — show your linked bots\n"
+            "*Accounts:*\n"
+            "  `my accounts` — list balances\n"
+            "  `add HDFC Savings as bank account` — create account\n"
+            "  `delete all accounts` — remove all your accounts\n\n"
+            "*Other:*\n"
+            "  /channels — show your linked bots/channels\n"
             "  /apikey — get your API access token\n"
             "  /help — show this message\n"
         )
@@ -214,6 +218,12 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
 
         if not msg.text:
             await self.send_message(msg.chat_id, "Send me a text message, a voice note, or a photo of your receipt.")
+            return
+
+        # ── Account management (delete all / create)? ────────────────────
+        manage_reply = await self.maybe_manage_accounts(msg, db)
+        if manage_reply is not None:
+            await self.send_message(msg.chat_id, manage_reply)
             return
 
         # ── Account list? ─────────────────────────────────────────────────

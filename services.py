@@ -99,8 +99,60 @@ def delete_account(db: Session, account_id: int) -> None:
     acc = db.query(Account).get(account_id)
     if not acc:
         raise ValueError(f"Account {account_id} not found")
+    if acc.is_protected:
+        raise ValueError("This account is protected and cannot be deleted.")
     acc.is_active = False
     db.commit()
+
+
+def delete_all_user_accounts(db: Session, user_id: int) -> int:
+    """Deactivate all non-protected accounts owned by the user. Returns count deleted."""
+    accs = db.query(Account).filter(
+        Account.user_id == user_id,
+        Account.is_active == True,
+        Account.is_protected == False,
+    ).all()
+    for acc in accs:
+        acc.is_active = False
+    db.commit()
+    return len(accs)
+
+
+@dataclass
+class ParsedAccount:
+    name:  str
+    type:  str   # matches AccountType enum values
+    valid: bool = True
+    error: str  = ""
+
+
+def parse_account_with_ai(text: str) -> ParsedAccount:
+    """Extract account name and type from a natural-language message."""
+    import json
+    from litellm import completion
+
+    types = "bank, credit_card, cash, metro_card, wallet, loan, chitty, other"
+    prompt = f"""Extract account details from the user's message.
+Return ONLY a JSON object:
+{{"name": "<account name>", "type": "<one of: {types}>", "valid": true}}
+If you cannot determine name or type, return {{"valid": false, "error": "<reason>"}}.
+
+User message: {text}"""
+
+    resp = completion(
+        model="anthropic/claude-haiku-4-5",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=100,
+    )
+    raw = resp.choices[0].message.content.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    data = json.loads(raw.strip())
+    if not data.get("valid", True):
+        return ParsedAccount(name="", type="", valid=False, error=data.get("error", ""))
+    return ParsedAccount(name=data["name"], type=data["type"])
 
 
 def _account_dict(a: Account) -> dict:

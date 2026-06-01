@@ -149,6 +149,7 @@ class Account(Base):
     currency     = Column(String(10), default="INR")
     color        = Column(String(20), default="#6366f1")
     is_active    = Column(Boolean, default=True, nullable=False)
+    is_protected = Column(Boolean, default=False, nullable=False)  # cannot be deleted
     created_at   = Column(DateTime, server_default=func.now())
     # Loan / Chitty extras
     total_amount = Column(Float, nullable=True)
@@ -281,6 +282,8 @@ def _seed(eng):
                 "ALTER TABLE accounts ADD COLUMN shared_limit_account_id INTEGER"
                 " REFERENCES accounts(id)"
             ))
+        if "is_protected" not in existing_cols:
+            conn.execute(text("ALTER TABLE accounts ADD COLUMN is_protected BOOLEAN DEFAULT FALSE NOT NULL"))
     with Session(eng) as s:
         if s.query(Category).count() == 0:
             s.add_all([
@@ -299,14 +302,5 @@ def _seed(eng):
                 Category(name="EMI",              icon="🏦", color="#64748b"),
                 Category(name="Chitty",           icon="🤝", color="#d97706"),
                 Category(name="Miscellaneous",    icon="📦", color="#94a3b8"),
-            ])
-            s.commit()
-        if s.query(Account).count() == 0:
-            s.add_all([
-                Account(name="HDFC Savings",     type=AccountType.bank,        balance=0, color="#003f8a"),
-                Account(name="HDFC Credit Card", type=AccountType.credit_card, balance=0, color="#e63946"),
-                Account(name="Cash",             type=AccountType.cash,        balance=0, color="#2d6a4f"),
-                Account(name="Metro Card",       type=AccountType.metro_card,  balance=0, color="#e76f51"),
-                Account(name="Amazon Pay",       type=AccountType.wallet,      balance=0, color="#f4a261"),
             ])
             s.commit()

@@ -130,11 +130,22 @@ def public_config():
 
 
 class WebOTPRequest(BaseModel):
-    email: str
+    email:    str
+    platform: Optional[str] = None   # specific channel to send OTP to
 
 class WebOTPVerify(BaseModel):
     email: str
     otp:   str
+
+
+@app.get("/api/auth/web/channels", include_in_schema=False)
+def web_user_channels(email: str, db: Session = Depends(get_db)):
+    """Return the linked bot platforms for a given email (for channel picker on login page)."""
+    user = auth_service.get_user_by_email(email, db)
+    if not user:
+        return {"platforms": [], "primary": None}
+    identities = auth_service.get_user_bot_identities(user.id, db)
+    return {"platforms": [i.platform for i in identities], "primary": user.primary_bot}
 
 
 @app.post("/api/auth/web/request-otp", include_in_schema=False)
@@ -145,19 +156,24 @@ async def web_request_otp(data: WebOTPRequest, db: Session = Depends(get_db)):
 
     otp        = auth_service.generate_otp(user.id, db)
     identities = auth_service.get_user_bot_identities(user.id, db)
-    primary    = next((i for i in identities if i.platform == user.primary_bot), None) \
+
+    # Use explicitly requested platform, else fall back to primary, else first linked
+    if data.platform:
+        target = next((i for i in identities if i.platform == data.platform), None)
+    else:
+        target = next((i for i in identities if i.platform == user.primary_bot), None) \
                  or (identities[0] if identities else None)
 
-    if primary:
+    if target:
         from plugins.registry import get as get_plugin
-        plugin = get_plugin(primary.platform)
+        plugin = get_plugin(target.platform)
         if plugin:
             await plugin.send_message(
-                primary.chat_id,
+                target.chat_id,
                 f"Your Hisaab web login code:\n\n*{otp}*\n\nExpires in 10 minutes.",
             )
 
-    return {"ok": True, "sent_to": primary.platform if primary else None}
+    return {"ok": True, "sent_to": target.platform if target else None}
 
 
 @app.post("/api/auth/web/verify-otp", include_in_schema=False)
