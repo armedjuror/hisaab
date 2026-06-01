@@ -219,9 +219,13 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
                     else:
                         await self.send_message(msg.chat_id, "Couldn't read the image. Try typing the amount instead.")
                         return
-                except Exception:
+                except Exception as exc:
                     log.exception("OCR failed")
-                    await self.send_message(msg.chat_id, "Image reading failed. Send a text message instead.")
+                    await self.send_message(
+                        msg.chat_id,
+                        f"Image reading failed: {exc}\n\nMake sure Tesseract is installed (`tesseract --version`), "
+                        "or type the expense as text instead."
+                    )
                     return
 
         if not msg.text:

@@ -152,20 +152,26 @@ class BasePlugin(ABC):
         """
         import re
         text = (msg.text or "").strip().lower()
-        if not re.search(r"\baccounts?\b|/accounts", text):
+
+        # Only trigger on clear intent to list accounts, not incidental "account" in expense messages
+        list_intent = re.search(
+            r"(^|\b)(my|show|list|view|check|see|all)\s+accounts?\b"
+            r"|^accounts?$"
+            r"|/accounts"
+            r"|\baccounts?\s+(balance|list|summary)",
+            text,
+        )
+        if not list_intent:
             return None
 
-        # Defer balance updates to maybe_update_account_balance
+        # Defer to other handlers
         if re.search(r'\b(set|update|change|fix|correct)\b.+\b(balance|amount)\b', text):
             return None
-
-        # Defer delete-all and create to the async handler below
         if re.search(r"\b(delete|remove|clear|reset)\b.*(all|every)", text) or \
            re.search(r"(all|every).*(delete|remove|clear|reset)\b.*account", text):
-            return None  # handled by maybe_manage_accounts
-
+            return None
         if re.search(r"\b(add|create|new)\b", text):
-            return None  # handled by maybe_manage_accounts
+            return None
 
         from services import get_accounts
         accounts = get_accounts(db, user_id=msg.user_id)

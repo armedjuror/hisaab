@@ -703,12 +703,13 @@ def transcribe_audio(file_path: str) -> str:
 
 
 def ocr_image(file_path: str) -> str:
-    """Extract text from a receipt/invoice image using local Tesseract OCR."""
-    import pytesseract
-    from PIL import Image
-    img = Image.open(file_path)
-    # PSM 6 = assume a single uniform block of text (good for receipts)
-    return pytesseract.image_to_string(img, config="--psm 6").strip()
+    """Extract text from a receipt/invoice image using RapidOCR."""
+    from rapidocr_onnxruntime import RapidOCR
+    engine = RapidOCR()
+    result, _ = engine(file_path, use_det=True, use_cls=True, use_rec=True)
+    if not result:
+        return ""
+    return "\n".join(r[1] for r in result).strip()
 
 
 # ── AI parsing (shared across all plugins) ────────────────────────────────
@@ -753,6 +754,8 @@ Rules:
 - Set a field to null and add it to missing[] if you cannot confidently infer it.
 - Prefer the most specific matching account/category.
 - Default date to today if not mentioned.
+- For receipt/invoice OCR text: pack ALL reference codes into note — ticket numbers, route numbers, invoice IDs, order IDs, seat/bus numbers, depot info, etc. Comma-separate them.
+- description should be a clean human-readable summary (e.g. "BMTC Bus Fare - Route 314D/3, Indiranagara to Malleshpalya").
 
 User message: {text}"""
 
