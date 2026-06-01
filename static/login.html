@@ -6,22 +6,28 @@
 <title>Hisaab — Sign in</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Merriweather:ital,opsz,wght@0,18..144,300..900;1,18..144,300..900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg:       #0d0f14;
-    --surface:  #161920;
-    --surface2: #1e2230;
-    --border:   #2a2f40;
-    --text:     #e8eaf0;
-    --muted:    #6b7280;
-    --accent:   rgba(152,117,63,1);
-    --accent2:  rgba(216,168,90,1);
-    --green:    #22c55e;
-    --red:      #ef4444;
-    --radius:   14px;
-    --font-head: 'Merriweather', serif;
-    --font-body: 'DM Sans', sans-serif;
+    --bg:        #090b0f;
+    --surface:   #0f1117;
+    --surface2:  #161a24;
+    --surface3:  #1d2233;
+    --border:    #1c2030;
+    --border2:   #252b3d;
+    --text:      #dde1ed;
+    --text2:     #9299b0;
+    --muted:     #4d5468;
+    --accent:    #b8904a;
+    --accent2:   #d4a85a;
+    --accent-dim: rgba(184,144,74,.1);
+    --green:     #22c55e;
+    --red:       #f04848;
+    --red-dim:   rgba(240,72,72,.1);
+    --radius:    14px;
+    --font-head: 'Instrument Serif', serif;
+    --font-body: 'Inter', sans-serif;
   }
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -36,196 +42,327 @@
     align-items: center;
     justify-content: center;
     padding: 24px;
+    position: relative;
+    -webkit-font-smoothing: antialiased;
   }
 
-  /* Background glow */
+  /* Ambient glow */
   body::before {
     content: '';
     position: fixed;
-    top: 0; left: 50%; transform: translateX(-50%);
-    width: 600px; height: 400px;
+    top: -60px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 700px;
+    height: 500px;
     background: radial-gradient(ellipse at center top,
-      rgba(152,117,63,.1) 0%, transparent 70%);
+      rgba(184,144,74,.08) 0%,
+      transparent 65%);
     pointer-events: none;
+    z-index: 0;
+  }
+  body::after {
+    content: '';
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 500px;
+    height: 300px;
+    background: radial-gradient(ellipse at center bottom,
+      rgba(96,128,240,.04) 0%,
+      transparent 70%);
+    pointer-events: none;
+    z-index: 0;
   }
 
-  .logo {
+  .page-wrap {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    max-width: 400px;
+    animation: fadeUp .4s ease both;
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(14px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .logo-wrap {
     display: flex;
     align-items: center;
+    margin-bottom: 36px;
     text-decoration: none;
-    margin-bottom: 40px;
   }
 
+  /* Card */
   .card {
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border2);
     border-radius: 20px;
     padding: 36px 32px;
     width: 100%;
-    max-width: 400px;
-  }
-
-  .card-title {
-    font-family: var(--font-head);
-    font-size: 22px; font-weight: 800;
-    margin-bottom: 6px;
-    letter-spacing: -0.3px;
-  }
-  .card-sub {
-    font-size: 14px; color: var(--muted);
-    margin-bottom: 28px; line-height: 1.5;
+    box-shadow: 0 24px 60px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.02) inset;
   }
 
   /* Steps */
   .step { display: none; }
   .step.active { display: block; }
 
+  .step-head { margin-bottom: 28px; }
+
+  .step-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--accent-dim);
+    border: 1px solid rgba(184,144,74,.2);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--accent2);
+    margin-bottom: 16px;
+    letter-spacing: .3px;
+  }
+  .step-badge svg { width: 12px; height: 12px; }
+
+  .card-title {
+    font-family: var(--font-head);
+    font-size: 26px;
+    font-weight: 400;
+    letter-spacing: -.3px;
+    line-height: 1.15;
+    margin-bottom: 8px;
+  }
+  .card-title em { font-style: italic; color: var(--accent2); }
+
+  .card-sub {
+    font-size: 13.5px;
+    color: var(--text2);
+    line-height: 1.6;
+  }
+
+  /* Form */
   label {
     display: block;
-    font-size: 13px; color: var(--muted);
-    margin-bottom: 7px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--text2);
+    margin-bottom: 6px;
+    letter-spacing: .4px;
+    text-transform: uppercase;
   }
   input[type="email"],
   input[type="text"] {
     width: 100%;
-    padding: 12px 14px;
+    padding: 11px 14px;
     background: var(--surface2);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border2);
     border-radius: 10px;
     color: var(--text);
     font-family: var(--font-body);
-    font-size: 15px;
+    font-size: 14.5px;
     outline: none;
-    transition: border-color .18s;
+    transition: border-color .18s, box-shadow .18s;
     margin-bottom: 18px;
+    -webkit-font-smoothing: antialiased;
   }
-  input:focus { border-color: var(--accent); }
+  input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+  input::placeholder { color: var(--muted); }
 
+  /* OTP input */
+  input#otp-input {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 6px;
+    text-align: center;
+  }
+
+  /* Button */
   .btn {
     width: 100%;
-    padding: 13px;
+    padding: 12px;
     background: var(--accent);
     color: #fff;
     border: none;
     border-radius: 10px;
     font-family: var(--font-body);
-    font-size: 15px; font-weight: 600;
+    font-size: 14px;
+    font-weight: 600;
     cursor: pointer;
-    transition: opacity .18s, transform .12s;
+    transition: background .18s, box-shadow .18s, transform .1s;
+    letter-spacing: .2px;
+    box-shadow: 0 2px 16px rgba(184,144,74,.25);
   }
-  .btn:hover { opacity: .9; }
-  .btn:active { transform: scale(.98); }
-  .btn:disabled { opacity: .45; pointer-events: none; }
+  .btn:hover {
+    background: var(--accent2);
+    box-shadow: 0 4px 24px rgba(184,144,74,.35);
+    transform: translateY(-1px);
+  }
+  .btn:active { transform: scale(.98); box-shadow: none; }
+  .btn:disabled { opacity: .4; pointer-events: none; }
 
+  /* Error */
   .error-msg {
-    background: rgba(239,68,68,.12);
-    border: 1px solid rgba(239,68,68,.3);
+    display: none;
+    align-items: flex-start;
+    gap: 8px;
+    background: var(--red-dim);
+    border: 1px solid rgba(240,72,72,.2);
     color: var(--red);
     border-radius: 8px;
-    padding: 10px 14px;
+    padding: 10px 13px;
     font-size: 13px;
+    line-height: 1.5;
     margin-bottom: 16px;
-    display: none;
   }
-  .error-msg.show { display: block; }
+  .error-msg.show { display: flex; }
+  .error-msg svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; }
 
+  /* Info box */
   .info-box {
     background: var(--surface2);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border2);
     border-radius: 10px;
-    padding: 14px;
-    font-size: 13px; color: var(--muted);
-    line-height: 1.6;
-    margin-bottom: 20px;
-  }
-  .info-box strong { color: var(--text); }
-
-  .otp-hint {
-    font-size: 12px; color: var(--muted);
-    text-align: center;
-  }
-  .otp-hint a { color: var(--accent); cursor: pointer; text-decoration: none; }
-  .otp-hint a:hover { text-decoration: underline; }
-
-  .channel-btn {
-    padding: 7px 14px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    color: var(--text);
-    font-family: var(--font-body);
+    padding: 13px 15px;
     font-size: 13px;
-    cursor: pointer;
-    transition: border-color .15s, background .15s;
+    color: var(--text2);
+    line-height: 1.65;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
   }
-  .channel-btn:hover { border-color: var(--accent); background: rgba(152,117,63,.1); }
-  .channel-btn.active { border-color: var(--accent); background: rgba(152,117,63,.15); }
+  .info-box svg { width: 15px; height: 15px; color: var(--accent2); flex-shrink: 0; margin-top: 1px; }
+  .info-box strong { color: var(--text); font-weight: 600; }
 
-  footer-link {
-    display: block;
-    text-align: center;
-    margin-top: 24px;
-    font-size: 13px; color: var(--muted);
+  /* Channel picker */
+  .channel-picker-label {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 8px;
   }
-  footer-link a { color: var(--accent); text-decoration: none; }
+  .channel-btns-wrap { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 4px; }
+  .channel-btn {
+    padding: 6px 13px;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: 7px;
+    color: var(--text2);
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .channel-btn:hover { border-color: var(--accent); color: var(--text); background: var(--accent-dim); }
+  .channel-btn.active { border-color: var(--accent); color: var(--accent2); background: var(--accent-dim); }
+
+  /* Hint links */
+  .hint {
+    font-size: 12.5px;
+    color: var(--muted);
+    text-align: center;
+    margin-top: 16px;
+    line-height: 1.6;
+  }
+  .hint a { color: var(--text2); text-decoration: none; cursor: pointer; border-bottom: 1px solid var(--border2); padding-bottom: 1px; transition: color .15s, border-color .15s; }
+  .hint a:hover { color: var(--accent2); border-color: var(--accent); }
+
+  /* Divider */
+  .divider { height: 1px; background: var(--border); margin: 20px 0; }
+
+  /* Footer link */
+  .page-footer {
+    margin-top: 22px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .page-footer a { color: var(--text2); text-decoration: none; transition: color .15s; }
+  .page-footer a:hover { color: var(--accent2); }
 </style>
 </head>
 <body>
 
-<a class="logo" href="/"><img src="/static/logo.svg" alt="Hisaab" height="28"></a>
+<div class="page-wrap">
+  <a class="logo-wrap" href="/">
+    <img src="/static/logo.svg" alt="Hisaab" height="26">
+  </a>
 
-<div class="card">
+  <div class="card">
 
-  <!-- Step 1: Email -->
-  <div class="step active" id="step-email">
-    <div class="card-title">Sign in</div>
-    <p class="card-sub">We'll send a one-time code to your Telegram bot.</p>
+    <!-- Step 1: Email -->
+    <div class="step active" id="step-email">
+      <div class="step-head">
+        <div class="step-badge">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Secure sign-in
+        </div>
+        <div class="card-title">Welcome back<em>.</em></div>
+        <p class="card-sub">Enter your email and we'll send a one-time code via your bot.</p>
+      </div>
 
-    <div class="error-msg" id="email-error"></div>
+      <div class="error-msg" id="email-error">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span></span>
+      </div>
 
-    <label for="email-input">Email address</label>
-    <input type="email" id="email-input" placeholder="you@example.com" autocomplete="email">
+      <label for="email-input">Email address</label>
+      <input type="email" id="email-input" placeholder="you@example.com" autocomplete="email">
 
-    <button class="btn" id="email-btn" onclick="requestOTP()">Send code</button>
-  </div>
-
-  <!-- Step 2: OTP -->
-  <div class="step" id="step-otp">
-    <div class="card-title">Enter your code</div>
-    <p class="card-sub">Check your bot for the 6-digit login code.</p>
-
-    <div class="error-msg" id="otp-error"></div>
-
-    <div class="info-box">
-      Sent a code to your <strong id="otp-platform">bot</strong>.
-      Open the chat and paste the code below.
+      <button class="btn" id="email-btn" onclick="requestOTP()">Send code</button>
     </div>
 
-    <label for="otp-input">6-digit code</label>
-    <input type="text" id="otp-input" placeholder="123456" maxlength="6"
-           inputmode="numeric" autocomplete="one-time-code">
+    <!-- Step 2: OTP -->
+    <div class="step" id="step-otp">
+      <div class="step-head">
+        <div class="step-badge">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          Code sent
+        </div>
+        <div class="card-title">Check your <em>bot</em></div>
+        <p class="card-sub">A 6-digit code was sent to your <strong id="otp-platform" style="color:var(--text);font-weight:600">bot</strong>. It expires in 10 minutes.</p>
+      </div>
 
-    <button class="btn" id="otp-btn" onclick="verifyOTP()">Verify & sign in</button>
+      <div class="error-msg" id="otp-error">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span></span>
+      </div>
 
-    <!-- Channel picker -->
-    <div id="channel-picker" style="display:none;margin-top:18px">
-      <p style="font-size:13px;color:var(--muted);margin-bottom:10px">Send code to a different channel:</p>
-      <div id="channel-btns" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+      <label for="otp-input">6-digit code</label>
+      <input type="text" id="otp-input" placeholder="— — — — — —" maxlength="6"
+             inputmode="numeric" autocomplete="one-time-code">
+
+      <button class="btn" id="otp-btn" onclick="verifyOTP()">Verify &amp; sign in</button>
+
+      <!-- Channel picker -->
+      <div id="channel-picker" style="display:none;margin-top:18px">
+        <div class="divider"></div>
+        <p class="channel-picker-label">Send to a different channel:</p>
+        <div id="channel-btns" class="channel-btns-wrap"></div>
+      </div>
+
+      <p class="hint">
+        Didn't receive it? <a onclick="resendOTP()">Resend code</a>
+        &nbsp;&middot;&nbsp;
+        <a onclick="resetToEmail()">Use different email</a>
+      </p>
     </div>
 
-    <p class="otp-hint" style="margin-top:14px">
-      Didn't get it?
-      <a onclick="resendOTP()">Resend</a>
-      &nbsp;·&nbsp;
-      <a onclick="resetToEmail()">Different email</a>
-    </p>
   </div>
 
+  <p class="page-footer">
+    <a href="/">&#8592; Back to home</a>
+  </p>
 </div>
-
-<footer-link>
-  <a href="/">← Back to home</a>
-</footer-link>
 
 <script>
   let currentEmail = '';
@@ -235,7 +372,7 @@
 
   function showError(elId, msg) {
     const el = $(elId);
-    el.textContent = msg;
+    el.querySelector('span').textContent = msg;
     el.classList.add('show');
   }
   function clearError(elId) { $(elId).classList.remove('show'); }
@@ -266,7 +403,6 @@
   async function sendToChannel(platform) {
     currentPlatform = platform;
     $('otp-platform').textContent = cap(platform);
-    // Update active button
     document.querySelectorAll('.channel-btn').forEach(b => b.classList.remove('active'));
     event.target.classList.add('active');
     await sendOTP(platform);
@@ -295,7 +431,7 @@
       return;
     }
     const btn = $('email-btn');
-    btn.disabled = true; btn.textContent = 'Sending…';
+    btn.disabled = true; btn.textContent = 'Sending\u2026';
     try {
       currentEmail = email;
       const data = await sendOTP();
@@ -319,7 +455,7 @@
       return;
     }
     const btn = $('otp-btn');
-    btn.disabled = true; btn.textContent = 'Verifying…';
+    btn.disabled = true; btn.textContent = 'Verifying\u2026';
     try {
       const res  = await fetch('/api/auth/web/verify-otp', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -331,7 +467,7 @@
     } catch (e) {
       showError('otp-error', 'Something went wrong. Please try again.');
     } finally {
-      btn.disabled = false; btn.textContent = 'Verify & sign in';
+      btn.disabled = false; btn.textContent = 'Verify \u0026 sign in';
     }
   }
 
@@ -352,7 +488,8 @@
   $('email-input').addEventListener('keydown', e => { if (e.key === 'Enter') requestOTP(); });
   $('otp-input').addEventListener('keydown',   e => { if (e.key === 'Enter') verifyOTP(); });
   $('otp-input').addEventListener('input', () => {
-    if ($('otp-input').value.replace(/\D/g, '').length === 6) verifyOTP();
+    $('otp-input').value = $('otp-input').value.replace(/\D/g, '');
+    if ($('otp-input').value.length === 6) verifyOTP();
   });
 </script>
 </body>
