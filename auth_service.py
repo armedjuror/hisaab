@@ -38,8 +38,8 @@ def get_user_bot_identities(user_id: int, db: Session) -> list[BotIdentity]:
     return db.query(BotIdentity).filter_by(user_id=user_id).all()
 
 
-def create_user(name: str, email: str, primary_bot: str, db: Session) -> User:
-    user = User(name=name, email=email.lower().strip(), primary_bot=primary_bot)
+def create_user(name: str, email: str, primary_bot: str, db: Session, currency: str = "INR") -> User:
+    user = User(name=name, email=email.lower().strip(), primary_bot=primary_bot, currency=currency)
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -139,6 +139,9 @@ def set_bot_state(
     user_id: Optional[int] = None,
     temp_name: Optional[str] = None,
     temp_email: Optional[str] = None,
+    temp_currency: Optional[str] = None,
+    temp_otp: Optional[str] = None,
+    temp_otp_expires_at: Optional[datetime] = None,
 ) -> BotConversationState:
     existing = get_bot_state(platform, chat_id, db)
     if existing:
@@ -149,6 +152,12 @@ def set_bot_state(
             existing.temp_name = temp_name
         if temp_email is not None:
             existing.temp_email = temp_email
+        if temp_currency is not None:
+            existing.temp_currency = temp_currency
+        if temp_otp is not None:
+            existing.temp_otp = temp_otp
+        if temp_otp_expires_at is not None:
+            existing.temp_otp_expires_at = temp_otp_expires_at
         existing.updated_at = datetime.utcnow()
     else:
         existing = BotConversationState(
@@ -158,6 +167,9 @@ def set_bot_state(
             user_id=user_id,
             temp_name=temp_name,
             temp_email=temp_email,
+            temp_currency=temp_currency,
+            temp_otp=temp_otp,
+            temp_otp_expires_at=temp_otp_expires_at,
         )
         db.add(existing)
     db.commit()

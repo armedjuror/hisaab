@@ -748,20 +748,21 @@
   .cat-breakdown-name { display: flex; align-items: center; gap: 7px; font-weight: 500; }
   .cat-breakdown-value { font-weight: 700; }
 
-  /* ── Filters ── */
-  .filter-row { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
-  .filter-row select {
-    background: var(--surface);
+  /* ── Topbar filter selects ── */
+  #txnFilters { display: none; gap: 8px; align-items: center; }
+  .topbar-select {
+    background: var(--surface2);
     border: 1px solid var(--border2);
     color: var(--text);
-    padding: 7px 12px;
+    padding: 6px 10px;
     border-radius: var(--radius-sm);
-    font-size: 13px;
+    font-size: 12.5px;
+    cursor: pointer;
     outline: none;
     transition: border-color var(--transition);
     font-family: var(--font-body);
   }
-  .filter-row select:focus { border-color: var(--accent); }
+  .topbar-select:focus { border-color: var(--accent); }
 
   /* ── Pagination ── */
   .pagination {
@@ -875,6 +876,14 @@
         <h1 class="topbar-title" id="pageTitle">Dashboard</h1>
       </div>
       <div class="topbar-right">
+        <div id="txnFilters">
+          <select id="filterAccount" onchange="loadTransactions()" class="topbar-select">
+            <option value="">All Accounts</option>
+          </select>
+          <select id="filterCategory" onchange="loadTransactions()" class="topbar-select">
+            <option value="">All Categories</option>
+          </select>
+        </div>
         <div class="month-nav">
           <button onclick="prevMonth()"><i data-lucide="chevron-left"></i></button>
           <span id="monthLabel">—</span>
@@ -932,14 +941,6 @@
 
       <!-- TRANSACTIONS -->
       <div class="page" id="page-transactions">
-        <div class="filter-row">
-          <select id="filterAccount" onchange="loadTransactions()">
-            <option value="">All Accounts</option>
-          </select>
-          <select id="filterCategory" onchange="loadTransactions()">
-            <option value="">All Categories</option>
-          </select>
-        </div>
         <div class="panel">
           <div class="table-wrap">
             <table>
@@ -1248,14 +1249,15 @@
   </div>
 </div>
 
-<!-- ADD LENDING MODAL -->
+<!-- ADD/EDIT LENDING MODAL -->
 <div class="modal-overlay" id="lendingModal">
   <div class="modal">
     <div class="modal-head">
-      <h2>New Lending Entry</h2>
+      <h2 id="lendingModalTitle">New Lending Entry</h2>
       <button class="close-btn" onclick="closeModal('lendingModal')">&#x2715;</button>
     </div>
     <div class="modal-body">
+      <input type="hidden" id="lendEditId">
       <div class="form-row">
         <label>Type</label>
         <select id="lendType">
@@ -1333,7 +1335,7 @@ document.getElementById('lendDate').value = now.toISOString().slice(0,10);
 lucide.createIcons();
 
 // ── Navigation ─────────────────────────────────────────────────────────────
-function showPage(name) {
+function showPage(name, pushState = true) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
@@ -1343,6 +1345,8 @@ function showPage(name) {
     accounts: 'Accounts', budgets: 'Budgets', lending: 'Lending',
     analytics: 'Analytics', profile: 'Profile' };
   document.getElementById('pageTitle').textContent = titles[name] || name;
+  document.getElementById('txnFilters').style.display = name === 'transactions' ? 'flex' : 'none';
+  if (pushState) location.hash = name === 'dashboard' ? '' : name;
   closeSidebar();
   if (name === 'dashboard') loadDashboard();
   else if (name === 'transactions') { txnPage = 0; loadTransactions(); }
@@ -1352,6 +1356,12 @@ function showPage(name) {
   else if (name === 'analytics') loadAnalytics();
   else if (name === 'profile') loadProfile();
 }
+
+window.addEventListener('hashchange', () => {
+  const page = location.hash.replace('#', '') || 'dashboard';
+  const valid = ['dashboard','transactions','accounts','budgets','lending','analytics','profile'];
+  if (valid.includes(page)) showPage(page, false);
+});
 
 function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('open');
@@ -1953,12 +1963,13 @@ async function loadLending() {
       </div>
       <div class="lending-right">
         <div class="lending-amount ${l.type}">&#8377;${fmt(l.outstanding)}</div>
-        ${!l.is_settled ? `<div style="display:flex;gap:5px">
-          <button class="btn btn-success btn-sm" onclick="openSettle(${l.id})">Settle</button>
+        <div style="display:flex;gap:5px">
+          ${!l.is_settled ? `<button class="btn btn-success btn-sm" onclick="openSettle(${l.id})">Settle</button>` : ''}
+          <button class="btn btn-ghost btn-sm" onclick="openEditLending(${JSON.stringify(l).replace(/"/g,'&quot;')})">Edit</button>
           <button class="btn btn-danger btn-sm" onclick="deleteLending(${l.id})">
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M9 6V4h6v2"/></svg>
           </button>
-        </div>` : ''}
+        </div>
       </div>
     </div>`).join('');
 }
@@ -1971,7 +1982,26 @@ function switchLendingTab(filter, el) {
 }
 
 function openAddLending() {
+  document.getElementById('lendEditId').value = '';
+  document.getElementById('lendingModalTitle').textContent = 'New Lending Entry';
+  document.getElementById('lendType').value = 'lent';
+  document.getElementById('lendPerson').value = '';
+  document.getElementById('lendAmount').value = '';
   document.getElementById('lendDate').value = new Date().toISOString().slice(0,10);
+  document.getElementById('lendDue').value = '';
+  document.getElementById('lendNote').value = '';
+  openModal('lendingModal');
+}
+
+function openEditLending(l) {
+  document.getElementById('lendEditId').value = l.id;
+  document.getElementById('lendingModalTitle').textContent = 'Edit Lending Entry';
+  document.getElementById('lendType').value = l.type;
+  document.getElementById('lendPerson').value = l.person_name;
+  document.getElementById('lendAmount').value = l.amount;
+  document.getElementById('lendDate').value = l.date;
+  document.getElementById('lendDue').value = l.due_date || '';
+  document.getElementById('lendNote').value = l.note || '';
   openModal('lendingModal');
 }
 
@@ -1979,13 +2009,20 @@ async function saveLending() {
   const person = document.getElementById('lendPerson').value.trim();
   const amount = parseFloat(document.getElementById('lendAmount').value);
   if (!person || !amount) { toast('Fill required fields', 'error'); return; }
-  await api('/api/lending', 'POST', {
+  const editId = document.getElementById('lendEditId').value;
+  const payload = {
     person_name: person, type: document.getElementById('lendType').value,
     amount, date: document.getElementById('lendDate').value,
     due_date: document.getElementById('lendDue').value || null,
-    note: document.getElementById('lendNote').value || null, is_settled: false,
-  });
-  closeModal('lendingModal'); toast('Entry saved'); loadLending();
+    note: document.getElementById('lendNote').value || null,
+  };
+  if (editId) {
+    await api(`/api/lending/${editId}`, 'PUT', { ...payload, is_settled: false });
+    closeModal('lendingModal'); toast('Entry updated'); loadLending();
+  } else {
+    await api('/api/lending', 'POST', { ...payload, is_settled: false });
+    closeModal('lendingModal'); toast('Entry saved'); loadLending();
+  }
 }
 
 function openSettle(id) {
@@ -2182,7 +2219,9 @@ async function confirmDeleteAccount() {
 // ── Init ───────────────────────────────────────────────────────────────────
 (async () => {
   await loadBase();
-  loadDashboard();
+  const initPage = location.hash.replace('#', '') || 'dashboard';
+  const valid = ['dashboard','transactions','accounts','budgets','lending','analytics','profile'];
+  showPage(valid.includes(initPage) ? initPage : 'dashboard', false);
   // Re-run lucide after dynamic content loads
   lucide.createIcons();
 })();

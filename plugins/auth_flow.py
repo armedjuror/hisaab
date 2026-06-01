@@ -5,6 +5,8 @@ Conversation states
 -------------------
 awaiting_name       New user → collecting name
 awaiting_email      New user → collecting email
+awaiting_email_otp  New user → verifying email via Resend OTP
+awaiting_currency   New user → collecting currency preference
 awaiting_otp        OTP sent to current channel, awaiting entry
 awaiting_merge_otp  Email belongs to existing account; OTP sent to their
                     primary bot to prove ownership before merging identities
@@ -83,6 +85,10 @@ class AuthFlowMixin:
                 return await self._handle_otp(msg, db, state_row)
             if state_row.state == "awaiting_merge_otp":
                 return await self._handle_merge_otp(msg, db, state_row)
+            if state_row.state == "awaiting_email_otp":
+                return await self._handle_email_otp(msg, db, state_row)
+            if state_row.state == "awaiting_currency":
+                return await self._handle_currency(msg, db, state_row)
             if state_row.state == "awaiting_accounts_setup":
                 return await self._handle_accounts_setup(msg, db, state_row)
 
@@ -164,9 +170,98 @@ class AuthFlowMixin:
                 existing_user, email, platform, chat_id, state_row, db
             )
 
-        # Fresh signup — already verified by being in this bot, no OTP needed
-        name = state_row.temp_name or "User"
-        user = auth_service.create_user(name=name, email=email, primary_bot=platform, db=db)
+        # Fresh signup — send email verification OTP
+        import random
+        from datetime import datetime, timedelta
+        from email_service import send_email_otp
+
+        otp     = f"{random.randint(0, 999999):06d}"
+        expires = datetime.utcnow() + timedelta(minutes=10)
+        name    = state_row.temp_name or "there"
+
+        sent = send_email_otp(to_email=email, name=name, otp=otp)
+
+        auth_service.set_bot_state(
+            platform, chat_id, "awaiting_email_otp", db,
+            temp_name=state_row.temp_name, temp_email=email,
+            temp_otp=otp, temp_otp_expires_at=expires,
+        )
+
+        if sent:
+            await self.send_message(
+                chat_id,
+                f"We sent a 6-digit verification code to *{email}*.\n\n"
+                "Enter it here to continue:",
+            )
+        else:
+            await self.send_message(
+                chat_id,
+                f"Enter the 6-digit code sent to *{email}*:\n\n"
+                "_(Email delivery unavailable — check server logs)_",
+            )
+        return None
+
+    async def _handle_email_otp(
+        self, msg: InboundMessage, db: Session, state_row
+    ) -> Optional[User]:
+        platform = self.name
+        chat_id  = msg.chat_id
+        code     = (msg.text or "").strip()
+
+        from datetime import datetime
+        if not state_row.temp_otp or not state_row.temp_otp_expires_at:
+            await self.send_message(chat_id, "Something went wrong. Please start over by sending your email again.")
+            auth_service.clear_bot_state(platform, chat_id, db)
+            return None
+
+        if datetime.utcnow() > state_row.temp_otp_expires_at:
+            await self.send_message(
+                chat_id,
+                "That code has expired. Send your email again to get a new one.",
+            )
+            auth_service.set_bot_state(platform, chat_id, "awaiting_email", db,
+                                       temp_name=state_row.temp_name)
+            return None
+
+        if code != state_row.temp_otp:
+            await self.send_message(chat_id, "Invalid code. Please try again:")
+            return None
+
+        # Code verified — proceed to currency
+        auth_service.set_bot_state(
+            platform, chat_id, "awaiting_currency", db,
+            temp_name=state_row.temp_name, temp_email=state_row.temp_email,
+        )
+        await self.send_message(
+            chat_id,
+            "✅ Email verified!\n\n"
+            "What currency do you use? Enter a 3-letter code, e.g.:\n"
+            "  *INR* — Indian Rupee\n"
+            "  *USD* — US Dollar\n"
+            "  *EUR* — Euro\n"
+            "  *GBP* — British Pound\n"
+            "  *AED* — UAE Dirham\n\n"
+            "Find your code at xe.com/symbols",
+        )
+        return None
+
+    async def _handle_currency(
+        self, msg: InboundMessage, db: Session, state_row
+    ) -> Optional[User]:
+        platform = self.name
+        chat_id  = msg.chat_id
+        code     = (msg.text or "").strip().upper()
+
+        if len(code) != 3 or not code.isalpha():
+            await self.send_message(
+                chat_id,
+                "Please enter a valid 3-letter currency code (e.g. INR, USD, EUR):",
+            )
+            return None
+
+        name     = state_row.temp_name or "User"
+        email    = state_row.temp_email
+        user     = auth_service.create_user(name=name, email=email, primary_bot=platform, db=db, currency=code)
         auth_service.link_bot_identity(user.id, platform, chat_id, db)
         auth_service.create_session(user.id, db)
         from services import create_account
@@ -176,12 +271,12 @@ class AuthFlowMixin:
         auth_service.set_bot_state(platform, chat_id, "awaiting_accounts_setup", db, user_id=user.id)
         await self.send_message(
             chat_id,
-            f"✅ Welcome, *{user.name}*!\n\n"
+            f"✅ Welcome, *{user.name}*! Currency set to *{code}*.\n\n"
             "Tell me what other accounts you use — one at a time.\n"
             "Examples: *HDFC Savings bank*, *HDFC Credit Card*, *Amazon Pay wallet*\n\n"
             "Say *done* when finished.",
         )
-        return None  # don't parse the email text as a transaction
+        return None
 
     async def _handle_otp(
         self, msg: InboundMessage, db: Session, state_row

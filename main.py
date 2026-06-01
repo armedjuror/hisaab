@@ -464,6 +464,13 @@ def create_lending(data: LendingIn, db: Session = Depends(get_db), web_user=Depe
     return services.create_lending(db, user_id=uid, **data.model_dump())
 
 
+@app.put("/api/lending/{lid}", include_in_schema=False)
+def update_lending(lid: int, data: LendingIn, db: Session = Depends(get_db)):
+    try:
+        return services.update_lending(db, lid, **data.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
 @app.put("/api/lending/{lid}/settle", include_in_schema=False)
 def settle_lending(lid: int, amount: float = Query(...), db: Session = Depends(get_db)):
     try:

@@ -96,7 +96,7 @@ class WhatsAppPlugin(BasePlugin):
             await self.send_message(msg.chat_id, f"❌ Couldn't save: {exc}")
             return
 
-        warning = self.budget_warning(parsed, db)
+        warning = self.budget_warning(parsed, db, user_id=msg.user_id)
         await self.send_message(msg.chat_id, (parsed.reply or "✅ Logged!") + warning)
 
 

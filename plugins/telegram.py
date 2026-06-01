@@ -16,6 +16,7 @@ Commands:
     /help      — show all commands
 """
 
+import asyncio
 import logging
 import os
 
@@ -141,10 +142,11 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
         finally:
             os.unlink(tmp_path)
 
-    async def send_message(self, chat_id: str, text: str) -> None:
+    async def send_message(self, chat_id: str, text: str) -> int | None:
+        """Send a message and return its message_id."""
         if not self._token:
             log.warning("TELEGRAM_BOT_TOKEN not set — skipping send")
-            return
+            return None
         async with httpx.AsyncClient() as client:
             r = await client.post(
                 f"https://api.telegram.org/bot{self._token}/sendMessage",
@@ -159,6 +161,25 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
                 data.get("description", data),
             )
             raise RuntimeError(data.get("description", "Telegram delivery failed"))
+        return data["result"]["message_id"]
+
+    async def delete_message(self, chat_id: str, message_id: int) -> None:
+        if not self._token or not message_id:
+            return
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"https://api.telegram.org/bot{self._token}/deleteMessage",
+                json={"chat_id": chat_id, "message_id": message_id},
+                timeout=10,
+            )
+
+    async def send_transient_message(self, chat_id: str, text: str, delay: float = 3.0) -> None:
+        """Send a status message and delete it after `delay` seconds."""
+        message_id = await self.send_message(chat_id, text)
+        async def _delete_later():
+            await asyncio.sleep(delay)
+            await self.delete_message(chat_id, message_id)
+        asyncio.create_task(_delete_later())
 
     async def handle(self, msg: InboundMessage, db: Session) -> None:
         # Auth gate — handles signup/OTP flow; returns User or None
@@ -193,10 +214,11 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
             message = msg.raw.get("message", {})
             voice = message.get("voice") or message.get("audio")
             if voice:
-                await self.send_message(msg.chat_id, "🎙️ Transcribing your voice note…")
+                await self.send_transient_message(msg.chat_id, "🎙️ Transcribing your voice note…")
                 try:
                     transcript = await self.transcribe_voice(voice["file_id"])
                     if transcript:
+                        await self.send_transient_message(msg.chat_id, "🎙️ Transcription: \n" + transcript)
                         msg.text = transcript
                         log.info("Voice transcribed: %s", transcript)
                     else:
@@ -211,13 +233,13 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
         # Always OCR photos — even when a caption is present (caption + OCR text both go to AI)
         photo = msg.raw and msg.raw.get("message", {}).get("photo", [])
         if photo:
-            await self.send_message(msg.chat_id, "🔍 Reading your invoice…")
+            await self.send_transient_message(msg.chat_id, "🔍 Reading your invoice…")
             try:
                 ocr_text = await self.ocr_photo(photo[-1]["file_id"])
                 if ocr_text:
                     caption = msg.raw.get("message", {}).get("caption", "")
                     receipt_block = "RECEIPT:\n" + ocr_text
-                    msg.text = (caption + "\n" + receipt_block).strip() if caption else receipt_block
+                    msg.text = (receipt_block + '\n' + caption).strip() if caption else receipt_block
                     log.info("OCR extracted: %s", msg.text[:100])
                 else:
                     await self.send_message(msg.chat_id, "Couldn't read the image. Try typing the amount instead.")
@@ -234,53 +256,54 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
             await self.send_message(msg.chat_id, "Send me a text message, a voice note, or a photo of your receipt.")
             return
 
-        # ── Account management (delete all / create)? ────────────────────
-        manage_reply = await self.maybe_manage_accounts(msg, db)
-        if manage_reply is not None:
-            await self.send_message(msg.chat_id, manage_reply)
-            return
+        if not msg.text.startswith("RECEIPT"):
+            # ── Account management (delete all / create)? ────────────────────
+            manage_reply = await self.maybe_manage_accounts(msg, db)
+            if manage_reply is not None:
+                await self.send_message(msg.chat_id, manage_reply)
+                return
 
-        # ── Set / update account balance? ────────────────────────────────
-        balance_reply = self.maybe_update_account_balance(msg, db)
-        if balance_reply is not None:
-            await self.send_message(msg.chat_id, balance_reply)
-            return
+            # ── Set / update account balance? ────────────────────────────────
+            balance_reply = self.maybe_update_account_balance(msg, db)
+            if balance_reply is not None:
+                await self.send_message(msg.chat_id, balance_reply)
+                return
 
-        # ── Account list? ─────────────────────────────────────────────────
-        accounts_reply = self.maybe_list_accounts(msg, db)
-        if accounts_reply is not None:
-            await self.send_message(msg.chat_id, accounts_reply)
-            return
+            # ── Account list? ─────────────────────────────────────────────────
+            accounts_reply = self.maybe_list_accounts(msg, db)
+            if accounts_reply is not None:
+                await self.send_message(msg.chat_id, accounts_reply)
+                return
 
-        # ── Category list? ────────────────────────────────────────────────
-        categories_reply = self.maybe_list_categories(msg, db)
-        if categories_reply is not None:
-            await self.send_message(msg.chat_id, categories_reply)
-            return
+            # ── Category list? ────────────────────────────────────────────────
+            categories_reply = self.maybe_list_categories(msg, db)
+            if categories_reply is not None:
+                await self.send_message(msg.chat_id, categories_reply)
+                return
 
-        # ── Budget summary? ───────────────────────────────────────────────
-        budget_reply = self.maybe_list_budgets(msg, db)
-        if budget_reply is not None:
-            await self.send_message(msg.chat_id, budget_reply)
-            return
+            # ── Budget summary? ───────────────────────────────────────────────
+            budget_reply = self.maybe_list_budgets(msg, db)
+            if budget_reply is not None:
+                await self.send_message(msg.chat_id, budget_reply)
+                return
 
-        # ── Today's spends? ───────────────────────────────────────────────
-        today_reply = self.maybe_get_today_spends(msg, db)
-        if today_reply is not None:
-            await self.send_message(msg.chat_id, today_reply)
-            return
+            # ── Today's spends? ───────────────────────────────────────────────
+            today_reply = self.maybe_get_today_spends(msg, db)
+            if today_reply is not None:
+                await self.send_message(msg.chat_id, today_reply)
+                return
 
-        # ── Lending? ──────────────────────────────────────────────────────
-        lending_reply = await self.maybe_handle_lending(msg, db)
-        if lending_reply is not None:
-            await self.send_message(msg.chat_id, lending_reply)
-            return
+            # ── Lending? ──────────────────────────────────────────────────────
+            lending_reply = await self.maybe_handle_lending(msg, db)
+            if lending_reply is not None:
+                await self.send_message(msg.chat_id, lending_reply)
+                return
 
-        # ── Report request? ───────────────────────────────────────────────
-        report = await self.maybe_get_report(msg, db)
-        if report is not None:
-            await self.send_message(msg.chat_id, report)
-            return
+            # ── Report request? ───────────────────────────────────────────────
+            report = await self.maybe_get_report(msg, db)
+            if report is not None:
+                await self.send_message(msg.chat_id, report)
+                return
 
         # ── Expense / income entry ────────────────────────────────────────
         try:
@@ -288,6 +311,12 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
         except Exception as exc:
             log.exception("AI parse failed")
             await self.send_message(msg.chat_id, f"Couldn't parse that: {exc}")
+            return
+
+        # Treat as chat if AI flagged it, or if there's no amount and nothing is missing
+        # (AI occasionally misclassifies greetings as transactions with empty missing list)
+        if parsed.chat or (parsed.amount is None and not parsed.missing):
+            await self.send_message(msg.chat_id, parsed.reply or "Hey! Send me an expense or income to log.")
             return
 
         if parsed.missing:
@@ -301,7 +330,7 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
             await self.send_message(msg.chat_id, f"Couldn't save: {exc}")
             return
 
-        warning = self.budget_warning(parsed, db)
+        warning = self.budget_warning(parsed, db, user_id=msg.user_id)
         await self.send_message(msg.chat_id, (parsed.reply or "Logged!") + warning)
 
 
@@ -326,5 +355,12 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
         chat_id    = chat_id,
         raw        = payload,
     )
-    await _plugin.handle(msg, db)
+    async def _handle_in_background():
+        db = SessionLocal()
+        try:
+            await _plugin.handle(msg, db)
+        finally:
+            db.close()
+
+    asyncio.create_task(_handle_in_background())
     return {"ok": True}

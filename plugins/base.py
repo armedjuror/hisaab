@@ -94,17 +94,18 @@ class BasePlugin(ABC):
             user_id      = msg.user_id,
         )
 
-    def budget_warning(self, parsed: "services.ParsedTransaction", db) -> str:  # noqa: F821
+    def budget_warning(self, parsed: "services.ParsedTransaction", db, user_id=None) -> str:  # noqa: F821
         """Returns a warning string if the category is over daily pace, else ''."""
         from datetime import date
-        from services import get_budget_status
+        from services import get_budget_status, get_user_currency, currency_symbol
         if not parsed.category_id:
             return ""
         today = date.today()
         status = get_budget_status(db, parsed.category_id, today.month, today.year)
         if status and status.over_pace:
+            sym = currency_symbol(get_user_currency(db, user_id))
             return (
-                f"\n\n⚠️ You're ₹{status.over_pace_by:,.0f} over daily pace"
+                f"\n\n⚠️ You're {sym}{status.over_pace_by:,.0f} over daily pace"
                 f" in *{status.category_name}* this month."
             )
         return ""
@@ -142,8 +143,10 @@ class BasePlugin(ABC):
             names = ', '.join(f"*{a['name']}*" for a in accounts)
             return f"Which account? I have: {names}"
 
+        from services import get_user_currency, currency_symbol
+        sym = currency_symbol(get_user_currency(db, msg.user_id))
         update_account(db, matched['id'], balance=amount)
-        return f"✅ *{matched['name']}* balance set to ₹{amount:,.2f}"
+        return f"✅ *{matched['name']}* balance set to {sym}{amount:,.2f}"
 
     def maybe_list_accounts(self, msg: InboundMessage, db) -> Optional[str]:  # noqa: F821
         """
@@ -173,15 +176,16 @@ class BasePlugin(ABC):
         if re.search(r"\b(add|create|new)\b", text):
             return None
 
-        from services import get_accounts
+        from services import get_accounts, get_user_currency, currency_symbol
         accounts = get_accounts(db, user_id=msg.user_id)
         if not accounts:
             return "You have no accounts yet. Say *add [name] as [type] account* to create one."
 
+        sym = currency_symbol(get_user_currency(db, msg.user_id))
         lines = ["*Your accounts:*\n"]
         for a in accounts:
             type_label = str(a['type']).split('.')[-1].replace('_', ' ').title()
-            lines.append(f"  • *{a['name']}* ({type_label}) — ₹{a['balance']:,.2f}")
+            lines.append(f"  • *{a['name']}* ({type_label}) — {sym}{a['balance']:,.2f}")
         return "\n".join(lines)
 
     async def maybe_manage_accounts(self, msg: InboundMessage, db) -> Optional[str]:  # noqa: F821
@@ -261,7 +265,8 @@ class BasePlugin(ABC):
 
         today = date.today()
         from services import list_transactions
-        txns = list_transactions(db, month=today.month, year=today.year, limit=500, user_id=msg.user_id)
+        result = list_transactions(db, month=today.month, year=today.year, limit=500, user_id=msg.user_id)
+        txns = result["items"]
         today_txns = [t for t in txns if t["date"] == today.isoformat()]
 
         if not today_txns:
@@ -270,17 +275,19 @@ class BasePlugin(ABC):
         total_expense = sum(t["amount"] for t in today_txns if t["type"] == "expense")
         total_income  = sum(t["amount"] for t in today_txns if t["type"] == "income")
 
+        from services import get_user_currency, currency_symbol
+        sym = currency_symbol(get_user_currency(db, msg.user_id))
         lines = [f"*Today ({today.strftime('%b %d')}):*\n"]
         for t in today_txns:
             prefix = "+" if t["type"] == "income" else "−"
             cat = f"  _{t['category_name']}_" if t.get("category_name") else ""
-            lines.append(f"  {prefix}₹{t['amount']:,.0f} — {t['description']}{cat}")
+            lines.append(f"  {prefix}{sym}{t['amount']:,.0f} — {t['description']}{cat}")
 
         summary = []
         if total_expense:
-            summary.append(f"Spent: *₹{total_expense:,.0f}*")
+            summary.append(f"Spent: *{sym}{total_expense:,.0f}*")
         if total_income:
-            summary.append(f"Received: *₹{total_income:,.0f}*")
+            summary.append(f"Received: *{sym}{total_income:,.0f}*")
         if summary:
             lines.append("\n" + "  |  ".join(summary))
 
@@ -293,14 +300,38 @@ class BasePlugin(ABC):
         """
         import re
         text = (msg.text or "").strip().lower()
-        if not re.search(r'\b(lent|loaned|lend|borrowed|borrow|owe|owes|loan|debt|lending)\b', text):
+        if not re.search(
+            r'\b(lent|loaned|lend|borrowed|borrow|owe|owes|loan|debt|lending'
+            r'|settled|settle|paid back|repaid|returned|cleared)\b',
+            text,
+        ):
             return None
 
-        from services import parse_lending_with_ai, create_lending, list_lending
+        from services import parse_lending_with_ai, create_lending, list_lending, settle_lending, get_user_currency, currency_symbol
+        _sym = currency_symbol(get_user_currency(db, msg.user_id))
         parsed = parse_lending_with_ai(msg.text or "")
 
         if parsed.intent == "unknown":
             return None
+
+        if parsed.intent == "settle":
+            if not parsed.person:
+                return "Who did you settle with? Please mention the person's name."
+            records = list_lending(db, settled=False, user_id=msg.user_id)
+            # Match by person name (case-insensitive, partial)
+            person_lower = parsed.person.lower()
+            matches = [r for r in records if person_lower in r["person_name"].lower()
+                       or r["person_name"].lower() in person_lower]
+            if not matches:
+                return f"No unsettled lending found for *{parsed.person}*."
+            settled_records = []
+            for r in matches:
+                amount = parsed.amount if parsed.amount else r["outstanding"]
+                settle_lending(db, r["id"], amount)
+                settled_records.append(
+                    f"*{r['person_name']}*: {_sym}{amount:,.0f} ({'fully' if amount >= r['outstanding'] else 'partially'} settled)"
+                )
+            return "✅ Settled:\n" + "\n".join(f"  • {s}" for s in settled_records)
 
         if parsed.intent == "log":
             if parsed.missing:
@@ -319,7 +350,7 @@ class BasePlugin(ABC):
             )
             return parsed.reply or (
                 f"Logged: {'lent' if parsed.lending_type == 'lent' else 'borrowed'} "
-                f"*₹{parsed.amount:,.0f}* {'to' if parsed.lending_type == 'lent' else 'from'} *{parsed.person}*."
+                f"*{_sym}{parsed.amount:,.0f}* {'to' if parsed.lending_type == 'lent' else 'from'} *{parsed.person}*."
             )
 
         # List intents
@@ -340,9 +371,9 @@ class BasePlugin(ABC):
         total = 0.0
         for r in records:
             arrow = "→" if r["type"] == "lent" else "←"
-            lines.append(f"  {arrow} *{r['person_name']}*: ₹{r['outstanding']:,.0f}")
+            lines.append(f"  {arrow} *{r['person_name']}*: {_sym}{r['outstanding']:,.0f}")
             total += r["outstanding"]
-        lines.append(f"\n*Total: ₹{total:,.0f}*")
+        lines.append(f"\n*Total: {_sym}{total:,.0f}*")
         return "\n".join(lines)
 
     def maybe_list_budgets(self, msg: InboundMessage, db) -> Optional[str]:  # noqa: F821
@@ -356,12 +387,13 @@ class BasePlugin(ABC):
             return "Budget setting isn't supported here yet — use the dashboard to set budgets."
 
         today = date.today()
-        from services import list_budgets
+        from services import list_budgets, get_user_currency, currency_symbol
         budgets = list_budgets(db, today.month, today.year, user_id=msg.user_id)
 
         if not budgets:
             return f"No budgets set for {today.strftime('%B %Y')}. Add them from the dashboard."
 
+        sym = currency_symbol(get_user_currency(db, msg.user_id))
         lines = [f"*Budgets — {today.strftime('%B %Y')}:*\n"]
         for b in budgets:
             icon    = b.get("category_icon", "💰")
@@ -376,7 +408,7 @@ class BasePlugin(ABC):
             lines.append(
                 f"  {status} {icon} *{name}*\n"
                 f"     {bar} {pct}%\n"
-                f"     ₹{spent:,.0f} of ₹{total:,.0f}  (₹{remaining:,.0f} left)"
+                f"     {sym}{spent:,.0f} of {sym}{total:,.0f}  ({sym}{remaining:,.0f} left)"
             )
         return "\n".join(lines)
 

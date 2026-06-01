@@ -21,6 +21,7 @@ class User(Base):
     name        = Column(String(100), nullable=False)
     email       = Column(String(255), unique=True, nullable=False, index=True)
     primary_bot = Column(String(50), default="telegram", nullable=False)
+    currency    = Column(String(10), default="INR", nullable=False)
     created_at  = Column(DateTime, server_default=func.now())
 
     bot_identities = relationship("BotIdentity", back_populates="user")
@@ -76,8 +77,11 @@ class BotConversationState(Base):
     state      = Column(String(50),  nullable=False)
     user_id    = Column(Integer, ForeignKey("users.id"), nullable=True)
     # Scratch space for multi-step flows
-    temp_name  = Column(String(100), nullable=True)   # collected name before email confirmed
-    temp_email = Column(String(255), nullable=True)   # email being verified in merge flow
+    temp_name          = Column(String(100), nullable=True)   # collected name before email confirmed
+    temp_email         = Column(String(255), nullable=True)   # email being verified in merge flow
+    temp_currency      = Column(String(10),  nullable=True)   # currency being confirmed during signup
+    temp_otp           = Column(String(10),  nullable=True)   # pre-user email verification code
+    temp_otp_expires_at = Column(DateTime,   nullable=True)   # expiry for temp_otp
     updated_at = Column(DateTime, server_default=func.now())
 
 

@@ -18,8 +18,57 @@ from sqlalchemy.orm import Session
 
 from models import (
     Account, Category, Transaction, Budget, Lending,
-    AccountType, TransactionType, LendingType,
+    AccountType, TransactionType, LendingType, User,
 )
+
+
+# ── Currency helpers ───────────────────────────────────────────────────────
+
+# Common ISO 4217 currency code → symbol mapping
+_CURRENCY_SYMBOLS: dict[str, str] = {
+    "AED": "د.إ", "AFN": "؋",  "ALL": "L",   "AMD": "֏",  "ANG": "ƒ",
+    "AOA": "Kz",  "ARS": "$",  "AUD": "A$",  "AWG": "ƒ",  "AZN": "₼",
+    "BAM": "KM",  "BBD": "$",  "BDT": "৳",   "BGN": "лв", "BHD": ".د.ب",
+    "BIF": "Fr",  "BMD": "$",  "BND": "$",   "BOB": "Bs.", "BRL": "R$",
+    "BSD": "$",   "BTN": "Nu", "BWP": "P",   "BYN": "Br", "BZD": "$",
+    "CAD": "C$",  "CDF": "Fr", "CHF": "Fr",  "CLP": "$",  "CNY": "¥",
+    "COP": "$",   "CRC": "₡",  "CUP": "$",   "CVE": "$",  "CZK": "Kč",
+    "DJF": "Fr",  "DKK": "kr", "DOP": "$",   "DZD": "د.ج","EGP": "£",
+    "ERN": "Nfk", "ETB": "Br", "EUR": "€",   "FJD": "$",  "FKP": "£",
+    "GBP": "£",   "GEL": "₾",  "GHS": "₵",   "GIP": "£",  "GMD": "D",
+    "GNF": "Fr",  "GTQ": "Q",  "GYD": "$",   "HKD": "HK$","HNL": "L",
+    "HRK": "kn",  "HTG": "G",  "HUF": "Ft",  "IDR": "Rp", "ILS": "₪",
+    "INR": "₹",   "IQD": "ع.د","IRR": "﷼",   "ISK": "kr", "JMD": "$",
+    "JOD": "د.ا", "JPY": "¥",  "KES": "KSh", "KGS": "лв", "KHR": "៛",
+    "KMF": "Fr",  "KPW": "₩",  "KRW": "₩",   "KWD": "د.ك","KYD": "$",
+    "KZT": "₸",   "LAK": "₭",  "LBP": "£",   "LKR": "₨",  "LRD": "$",
+    "LSL": "L",   "LYD": "ل.د","MAD": "د.م.","MDL": "L",  "MGA": "Ar",
+    "MKD": "ден", "MMK": "K",  "MNT": "₮",   "MOP": "P",  "MRU": "UM",
+    "MUR": "₨",   "MVR": "Rf", "MWK": "MK",  "MXN": "$",  "MYR": "RM",
+    "MZN": "MT",  "NAD": "$",  "NGN": "₦",   "NIO": "C$", "NOK": "kr",
+    "NPR": "₨",   "NZD": "NZ$","OMR": "﷼",   "PAB": "B/.", "PEN": "S/.",
+    "PGK": "K",   "PHP": "₱",  "PKR": "₨",   "PLN": "zł", "PYG": "₲",
+    "QAR": "﷼",   "RON": "lei","RSD": "din", "RUB": "₽",  "RWF": "Fr",
+    "SAR": "﷼",   "SBD": "$",  "SCR": "₨",   "SDG": "£",  "SEK": "kr",
+    "SGD": "S$",  "SHP": "£",  "SLL": "Le",  "SOS": "Sh", "SRD": "$",
+    "STN": "Db",  "SYP": "£",  "SZL": "L",   "THB": "฿",  "TJS": "SM",
+    "TMT": "T",   "TND": "د.ت","TOP": "T$",  "TRY": "₺",  "TTD": "$",
+    "TWD": "NT$", "TZS": "Sh", "UAH": "₴",   "UGX": "Sh", "USD": "$",
+    "UYU": "$",   "UZS": "лв", "VES": "Bs.S","VND": "₫",  "VUV": "Vt",
+    "WST": "T",   "XAF": "Fr", "XCD": "$",   "XOF": "Fr", "XPF": "Fr",
+    "YER": "﷼",   "ZAR": "R",  "ZMW": "ZK",  "ZWL": "$",
+}
+
+def currency_symbol(code: str) -> str:
+    """Return the symbol for a currency code, falling back to the code itself."""
+    return _CURRENCY_SYMBOLS.get((code or "INR").upper(), code or "INR")
+
+def get_user_currency(db: Session, user_id: Optional[int]) -> str:
+    """Return the currency code for a user, defaulting to INR."""
+    if user_id is None:
+        return "INR"
+    user = db.query(User).get(user_id)
+    return (user.currency if user else None) or "INR"
 
 
 # ── Shared result types ────────────────────────────────────────────────────
@@ -465,6 +514,18 @@ def settle_lending(db: Session, lending_id: int, amount: float) -> dict:
     return _lending_dict(l)
 
 
+def update_lending(db: Session, lending_id: int, **kwargs) -> dict:
+    l = db.query(Lending).get(lending_id)
+    if not l:
+        raise ValueError(f"Lending {lending_id} not found")
+    for k, v in kwargs.items():
+        if v is not None and hasattr(l, k):
+            setattr(l, k, v)
+    l.is_settled = l.amount_settled >= l.amount
+    db.commit()
+    return _lending_dict(l)
+
+
 def delete_lending(db: Session, lending_id: int) -> None:
     l = db.query(Lending).get(lending_id)
     if not l:
@@ -694,13 +755,13 @@ def export_csv(db: Session, user_id: Optional[int] = None) -> str:
 _whisper_model = None
 
 def transcribe_audio(file_path: str) -> str:
-    """Transcribe an audio file using faster-whisper (base model, lazy-loaded)."""
+    """Transcribe an audio file using openai-whisper (base model, lazy-loaded)."""
     global _whisper_model
-    from faster_whisper import WhisperModel
+    import whisper
     if _whisper_model is None:
-        _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
-    segments, _ = _whisper_model.transcribe(file_path)
-    return " ".join(s.text for s in segments).strip()
+        _whisper_model = whisper.load_model("base")
+    result = _whisper_model.transcribe(file_path)
+    return result["text"].strip()
 
 
 def ocr_image(file_path: str) -> str:
@@ -779,11 +840,11 @@ User message: {text}"""
     return ParsedTransaction(
         chat        = bool(data.get("chat", False)),
         amount      = data.get("amount"),
-        description = data.get("description", ""),
+        description = data.get("description") or "",
         account_id  = data.get("account_id"),
         category_id = data.get("category_id"),
         date        = date.fromisoformat(data["date"]) if data.get("date") else (today or date.today()),
-        type        = data.get("type", "expense"),
+        type        = data.get("type") or "expense",
         note        = data.get("note"),
         missing     = data.get("missing", []),
         reply       = data.get("reply", ""),
@@ -804,6 +865,7 @@ def parse_lending_with_ai(text: str, today: Optional[date] = None) -> ParsedLend
 
 Intents:
 - "log"         — user is recording that they lent or borrowed money
+- "settle"      — user is recording a settlement/repayment (full or partial) of an existing lending record
 - "list_owed"   — user wants to see who owes them money
 - "list_i_owe"  — user wants to see what they owe others
 - "list_all"    — user wants to see all lending records
@@ -811,7 +873,7 @@ Intents:
 
 Return ONLY a JSON object:
 {{
-  "intent":       "log" | "list_owed" | "list_i_owe" | "list_all" | "unknown",
+  "intent":       "log" | "settle" | "list_owed" | "list_i_owe" | "list_all" | "unknown",
   "lending_type": "lent" | "borrowed" | null,
   "person":       <string or null>,
   "amount":       <number or null>,
@@ -824,6 +886,7 @@ Return ONLY a JSON object:
 Rules:
 - "lent/loaned/gave X to Y" → intent=log, lending_type=lent
 - "borrowed/took X from Y" → intent=log, lending_type=borrowed
+- "settled/paid back/returned/cleared/repaid [X] with/from/to Y" → intent=settle, person=Y, amount=X (null if not mentioned means full settlement)
 - "who owes me / what's due to me" → intent=list_owed
 - "what do I owe / my debts / whom do I owe" → intent=list_i_owe
 - "show all lending / loans" → intent=list_all
@@ -941,18 +1004,19 @@ def parse_report_request(text: str, today: Optional[date] = None) -> Optional[Re
     return ReportPeriod(period_type="month", month=today.month, year=today.year)
 
 
-def format_monthly_report(summary: dict, month: int, year: int) -> str:
+def format_monthly_report(summary: dict, month: int, year: int, currency: str = "INR") -> str:
     """Format a monthly_summary dict into a readable bot message."""
+    sym         = currency_symbol(currency)
     month_label = f"{calendar.month_name[month]} {year}"
     net         = summary["net"]
     net_sign    = "+" if net >= 0 else ""
 
     lines = [
         f"📊 *{month_label} Report*\n",
-        f"💰 Income:    ₹{summary['total_income']:,.0f}",
-        f"💸 Expenses:  ₹{summary['total_expense']:,.0f}",
-        f"📈 Net:       {net_sign}₹{net:,.0f}",
-        f"🏦 Net worth: ₹{summary['net_worth']:,.0f}",
+        f"💰 Income:    {sym}{summary['total_income']:,.0f}",
+        f"💸 Expenses:  {sym}{summary['total_expense']:,.0f}",
+        f"📈 Net:       {net_sign}{sym}{net:,.0f}",
+        f"🏦 Net worth: {sym}{summary['net_worth']:,.0f}",
     ]
 
     if summary.get("by_category"):
@@ -961,35 +1025,36 @@ def format_monthly_report(summary: dict, month: int, year: int) -> str:
         for cat in summary["by_category"][:5]:
             pct  = round(cat["total"] / total_exp * 100)
             icon = cat.get("icon", "•")
-            lines.append(f"  {icon} {cat['name']:<18} ₹{cat['total']:>8,.0f}  ({pct}%)")
+            lines.append(f"  {icon} {cat['name']:<18} {sym}{cat['total']:>8,.0f}  ({pct}%)")
 
     if summary.get("daily"):
         days  = summary["daily"]
         avg   = sum(d["total"] for d in days) / len(days) if days else 0
         peak  = max(days, key=lambda d: d["total"])
-        lines.append(f"\n📅 Daily avg:  ₹{avg:,.0f}")
-        lines.append(f"📌 Peak day:   {peak['date']}  ₹{peak['total']:,.0f}")
+        lines.append(f"\n📅 Daily avg:  {sym}{avg:,.0f}")
+        lines.append(f"📌 Peak day:   {peak['date']}  {sym}{peak['total']:,.0f}")
 
     if summary.get("credit_cards"):
         lines.append("\n💳 *Credit cards:*")
         for cc in summary["credit_cards"]:
             card_label = " + ".join(cc["cards"]) if len(cc["cards"]) > 1 else cc["name"]
             lines.append(f"  *{card_label}*")
-            lines.append(f"    Spent this month: ₹{cc['month_spend']:,.0f}")
-            lines.append(f"    Outstanding:      ₹{cc['outstanding']:,.0f}")
+            lines.append(f"    Spent this month: {sym}{cc['month_spend']:,.0f}")
+            lines.append(f"    Outstanding:      {sym}{cc['outstanding']:,.0f}")
             if cc.get("credit_limit"):
                 util = f"  ({cc['util_pct']}% used)" if cc.get("util_pct") is not None else ""
-                lines.append(f"    Limit:            ₹{cc['credit_limit']:,.0f}{util}")
-                lines.append(f"    Available:        ₹{cc['available']:,.0f}")
+                lines.append(f"    Limit:            {sym}{cc['credit_limit']:,.0f}{util}")
+                lines.append(f"    Available:        {sym}{cc['available']:,.0f}")
 
     return "\n".join(lines)
 
 
-def format_trend_report(trend: list[dict], months: int) -> str:
+def format_trend_report(trend: list[dict], months: int, currency: str = "INR") -> str:
     """Format a spending_trend list into a readable bot message."""
     if not trend:
         return "No data found for that period."
 
+    sym     = currency_symbol(currency)
     max_exp = max(t["expense"] for t in trend) or 1
     bar_w   = 10
 
@@ -997,13 +1062,11 @@ def format_trend_report(trend: list[dict], months: int) -> str:
     for t in trend:
         filled = round(t["expense"] / max_exp * bar_w)
         bar    = "█" * filled + "░" * (bar_w - filled)
-        lines.append(
-            f"`{t['month']:<8}` {bar}  ₹{t['expense']:>9,.0f}"
-        )
+        lines.append(f"`{t['month']:<8}` {bar}  {sym}{t['expense']:>9,.0f}")
 
     total = sum(t["expense"] for t in trend)
     avg   = total / len(trend)
-    lines.append(f"\nAvg/month: ₹{avg:,.0f}   Total: ₹{total:,.0f}")
+    lines.append(f"\nAvg/month: {sym}{avg:,.0f}   Total: {sym}{total:,.0f}")
     return "\n".join(lines)
 
 
@@ -1013,13 +1076,14 @@ def generate_report(
     user_id: Optional[int] = None,
 ) -> str:
     """Fetch data and return a formatted report string for the given period."""
-    today = date.today()
+    today    = date.today()
+    currency = get_user_currency(db, user_id)
 
     if period.period_type == "trend":
         trend = spending_trend(db, months=period.months, user_id=user_id)
-        return format_trend_report(trend, period.months)
+        return format_trend_report(trend, period.months, currency=currency)
 
     month = period.month or today.month
     year  = period.year  or today.year
     summary = monthly_summary(db, month, year, user_id=user_id)
-    return format_monthly_report(summary, month, year)
+    return format_monthly_report(summary, month, year, currency=currency)
