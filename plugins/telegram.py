@@ -205,28 +205,28 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
                     await self.send_message(msg.chat_id, "Voice transcription failed. Send a text message instead.")
                     return
 
-        # ── Photo/invoice image? OCR with Tesseract ──────────────────────
-        if not msg.text and msg.raw:
-            photo = msg.raw.get("message", {}).get("photo", [])
-            if photo:
-                await self.send_message(msg.chat_id, "🔍 Reading your invoice…")
-                try:
-                    ocr_text = await self.ocr_photo(photo[-1]["file_id"])
-                    if ocr_text:
-                        caption = msg.raw.get("message", {}).get("caption", "")
-                        msg.text = (caption + "\n" + ocr_text).strip() if caption else ocr_text
-                        log.info("OCR extracted: %s", msg.text[:100])
-                    else:
-                        await self.send_message(msg.chat_id, "Couldn't read the image. Try typing the amount instead.")
-                        return
-                except Exception as exc:
-                    log.exception("OCR failed")
-                    await self.send_message(
-                        msg.chat_id,
-                        f"Image reading failed: {exc}\n\nMake sure Tesseract is installed (`tesseract --version`), "
-                        "or type the expense as text instead."
-                    )
+        # ── Photo/invoice image? OCR ──────────────────────────────────────
+        # Always OCR photos — even when a caption is present (caption + OCR text both go to AI)
+        photo = msg.raw and msg.raw.get("message", {}).get("photo", [])
+        if photo:
+            await self.send_message(msg.chat_id, "🔍 Reading your invoice…")
+            try:
+                ocr_text = await self.ocr_photo(photo[-1]["file_id"])
+                if ocr_text:
+                    caption = msg.raw.get("message", {}).get("caption", "")
+                    receipt_block = "RECEIPT:\n" + ocr_text
+                    msg.text = (caption + "\n" + receipt_block).strip() if caption else receipt_block
+                    log.info("OCR extracted: %s", msg.text[:100])
+                else:
+                    await self.send_message(msg.chat_id, "Couldn't read the image. Try typing the amount instead.")
                     return
+            except Exception as exc:
+                log.exception("OCR failed")
+                await self.send_message(
+                    msg.chat_id,
+                    f"Image reading failed: {exc}\n\nTry typing the expense as text instead."
+                )
+                return
 
         if not msg.text:
             await self.send_message(msg.chat_id, "Send me a text message, a voice note, or a photo of your receipt.")

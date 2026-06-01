@@ -751,10 +751,12 @@ Return ONLY a JSON object — no markdown fences:
 }}
 
 Rules:
-- Set a field to null and add it to missing[] if you cannot confidently infer it.
+- Set a field to null and add it to missing[] if you cannot confidently infer it. Only add to missing[] if truly unresolvable.
+- description is NEVER missing — always infer a sensible summary from the available text.
 - Prefer the most specific matching account/category.
 - Default date to today if not mentioned.
-- For receipt/invoice OCR text: pack ALL reference codes into note — ticket numbers, route numbers, invoice IDs, order IDs, seat/bus numbers, depot info, etc. Comma-separate them.
+- If the message starts with "RECEIPT:" it is raw OCR output from a scanned receipt. Be lenient with OCR noise/garbled tokens and extract what you can.
+- For receipt OCR: pack ALL reference codes into note — ticket numbers, route numbers, invoice IDs, order IDs, seat/bus numbers, depot info, etc. Comma-separate them.
 - description should be a clean human-readable summary (e.g. "BMTC Bus Fare - Route 314D/3, Indiranagara to Malleshpalya").
 
 User message: {text}"""
