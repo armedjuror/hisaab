@@ -1695,25 +1695,31 @@ async function loadAccounts() {
 
     // Credit utilization
     let ccBlock = '';
-    if (isCC && a.credit_limit) {
-      const util = a.outstanding / a.credit_limit * 100;
-      const availClass = util > 85 ? 'critical' : util > 65 ? 'low' : '';
-      const barColor = util > 85 ? 'var(--red)' : util > 65 ? 'var(--yellow)' : 'var(--green)';
-      ccBlock = `
-        <div class="cc-util-row">
-          <span class="cc-util-label">Available</span>
-          <span class="cc-util-value cc-available ${availClass}">&#8377;${fmt(a.available_credit)}</span>
-        </div>
-        <div class="acc-progress-bg">
-          <div class="acc-progress-fill" style="width:${Math.min(util,100).toFixed(1)}%;background:${barColor}"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:11px;color:var(--muted)">
-          <span>&#8377;${fmt(a.outstanding)} used</span>
-          <span>&#8377;${fmt(a.credit_limit)} limit</span>
-        </div>`;
-    } else if (isCC && a.shared_limit_account_id) {
-      // Add-on card — no own limit, shows outstanding only
-      ccBlock = `<div class="acc-meta" style="margin-top:8px">Outstanding: &#8377;${fmt(a.outstanding)}</div>`;
+    if (isCC) {
+      // Determine group: primary card + all add-ons
+      const isPrimary = !!a.credit_limit && !a.shared_limit_account_id;
+      const parent = !isPrimary ? accounts.find(x => x.id === a.shared_limit_account_id) : null;
+      const primaryCard = isPrimary ? a : parent;
+      if (primaryCard && primaryCard.credit_limit) {
+        const allInGroup = accounts.filter(x => x.id === primaryCard.id || x.shared_limit_account_id === primaryCard.id);
+        const combinedOutstanding = allInGroup.reduce((s, x) => s + (x.outstanding || 0), 0);
+        const combinedAvailable = primaryCard.credit_limit - combinedOutstanding;
+        const util = combinedOutstanding / primaryCard.credit_limit * 100;
+        const availClass = util > 85 ? 'critical' : util > 65 ? 'low' : '';
+        const barColor = util > 85 ? 'var(--red)' : util > 65 ? 'var(--yellow)' : 'var(--green)';
+        ccBlock = `
+          <div class="cc-util-row">
+            <span class="cc-util-label">Available</span>
+            <span class="cc-util-value cc-available ${availClass}">&#8377;${fmt(combinedAvailable)}</span>
+          </div>
+          <div class="acc-progress-bg">
+            <div class="acc-progress-fill" style="width:${Math.min(util,100).toFixed(1)}%;background:${barColor}"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:11px;color:var(--muted)">
+            <span>&#8377;${fmt(a.outstanding)} used</span>
+            <span>&#8377;${fmt(primaryCard.credit_limit)} limit</span>
+          </div>`;
+      }
     }
 
     return `

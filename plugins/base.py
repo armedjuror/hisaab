@@ -109,6 +109,42 @@ class BasePlugin(ABC):
             )
         return ""
 
+    def maybe_update_account_balance(self, msg: InboundMessage, db) -> Optional[str]:  # noqa: F821
+        """
+        Handle messages like 'set HDFC balance to 4023' or 'update Cash amount to 500'.
+        Returns a reply string if handled, None otherwise.
+        """
+        import re
+        text = (msg.text or "").strip()
+        pattern = re.compile(
+            r'\b(set|update|change|fix|correct)\b.+\b(balance|amount)\b.+\b(to|=|:)\s*([\d,]+(?:\.\d+)?)',
+            re.IGNORECASE,
+        )
+        m = pattern.search(text)
+        if not m:
+            return None
+
+        amount = float(m.group(4).replace(',', ''))
+        from services import get_accounts, update_account
+        accounts = get_accounts(db, user_id=msg.user_id)
+        text_lower = text.lower()
+
+        # Longest name match wins (avoids "Cash" matching inside "HDFC Cash" etc.)
+        matched = None
+        best_len = 0
+        for a in accounts:
+            name_lower = a['name'].lower()
+            if name_lower in text_lower and len(name_lower) > best_len:
+                matched = a
+                best_len = len(name_lower)
+
+        if not matched:
+            names = ', '.join(f"*{a['name']}*" for a in accounts)
+            return f"Which account? I have: {names}"
+
+        update_account(db, matched['id'], balance=amount)
+        return f"✅ *{matched['name']}* balance set to ₹{amount:,.2f}"
+
     def maybe_list_accounts(self, msg: InboundMessage, db) -> Optional[str]:  # noqa: F821
         """
         Check whether the message is asking to list accounts.
@@ -117,6 +153,10 @@ class BasePlugin(ABC):
         import re
         text = (msg.text or "").strip().lower()
         if not re.search(r"\baccounts?\b|/accounts", text):
+            return None
+
+        # Defer balance updates to maybe_update_account_balance
+        if re.search(r'\b(set|update|change|fix|correct)\b.+\b(balance|amount)\b', text):
             return None
 
         # Defer delete-all and create to the async handler below

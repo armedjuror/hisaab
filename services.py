@@ -77,8 +77,17 @@ def get_accounts(db: Session, active_only: bool = True, user_id: Optional[int] =
     return [_account_dict(a) for a in q.all()]
 
 
+def _normalize_cc_balance(kwargs: dict) -> dict:
+    """For credit cards, balance is stored negative (outstanding = -balance). Flip if positive."""
+    acc_type = kwargs.get("type")
+    type_val = acc_type.value if hasattr(acc_type, "value") else str(acc_type)
+    if type_val == "credit_card" and "balance" in kwargs and kwargs["balance"] > 0:
+        kwargs["balance"] = -kwargs["balance"]
+    return kwargs
+
+
 def create_account(db: Session, **kwargs) -> dict:
-    acc = Account(**kwargs)
+    acc = Account(**_normalize_cc_balance(kwargs))
     db.add(acc)
     db.commit()
     db.refresh(acc)
@@ -89,6 +98,10 @@ def update_account(db: Session, account_id: int, **kwargs) -> dict:
     acc = db.query(Account).get(account_id)
     if not acc:
         raise ValueError(f"Account {account_id} not found")
+    if "balance" in kwargs and kwargs["balance"] > 0:
+        type_val = acc.type.value if hasattr(acc.type, "value") else str(acc.type)
+        if type_val == "credit_card":
+            kwargs["balance"] = -kwargs["balance"]
     for k, v in kwargs.items():
         setattr(acc, k, v)
     db.commit()

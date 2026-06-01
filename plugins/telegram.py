@@ -234,6 +234,12 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
             await self.send_message(msg.chat_id, manage_reply)
             return
 
+        # ── Set / update account balance? ────────────────────────────────
+        balance_reply = self.maybe_update_account_balance(msg, db)
+        if balance_reply is not None:
+            await self.send_message(msg.chat_id, balance_reply)
+            return
+
         # ── Account list? ─────────────────────────────────────────────────
         accounts_reply = self.maybe_list_accounts(msg, db)
         if accounts_reply is not None:

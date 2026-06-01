@@ -254,20 +254,30 @@ def delete_account_permanently(
         BotConversationState, OTPSession, UserSession, BotIdentity,
         OAuthAccessToken, OAuthClient, Transaction, Budget, Lending, Account,
     )
-    # Delete in FK-safe order
+    from sqlalchemy import or_
+    # Collect all account IDs owned by this user first
+    account_ids = [a.id for a in db.query(Account.id).filter(Account.user_id == uid).all()]
+    # Delete all transactions touching those accounts (regardless of transaction.user_id)
+    if account_ids:
+        db.query(Transaction).filter(
+            or_(
+                Transaction.account_id.in_(account_ids),
+                Transaction.to_account_id.in_(account_ids),
+            )
+        ).delete(synchronize_session=False)
+    # Delete remaining user-scoped records
     db.query(BotConversationState).filter(BotConversationState.user_id == uid).delete()
     db.query(OTPSession).filter(OTPSession.user_id == uid).delete()
     db.query(UserSession).filter(UserSession.user_id == uid).delete()
     db.query(BotIdentity).filter(BotIdentity.user_id == uid).delete()
-    db.query(Transaction).filter(Transaction.user_id == uid).delete()
     db.query(Budget).filter(Budget.user_id == uid).delete()
     db.query(Lending).filter(Lending.user_id == uid).delete()
     # OAuth tokens before clients
     client_ids = [c.id for c in db.query(OAuthClient).filter(OAuthClient.user_id == uid).all()]
     if client_ids:
-        db.query(OAuthAccessToken).filter(OAuthAccessToken.client_id.in_(client_ids)).delete()
+        db.query(OAuthAccessToken).filter(OAuthAccessToken.client_id.in_(client_ids)).delete(synchronize_session=False)
     db.query(OAuthClient).filter(OAuthClient.user_id == uid).delete()
-    # User-owned accounts (system accounts have user_id=None)
+    # Hard delete all user accounts (not soft-delete)
     db.query(Account).filter(Account.user_id == uid).delete()
     db.query(web_user.__class__).filter(web_user.__class__.id == uid).delete()
     db.commit()
@@ -334,8 +344,8 @@ def list_accounts(db: Session = Depends(get_db), web_user=Depends(get_web_user))
 
 
 @app.post("/api/accounts", status_code=201, include_in_schema=False)
-def create_account(data: AccountIn, db: Session = Depends(get_db)):
-    return services.create_account(db, **data.model_dump())
+def create_account(data: AccountIn, db: Session = Depends(get_db), web_user=Depends(get_web_user)):
+    return services.create_account(db, **data.model_dump(), user_id=web_user.id if web_user else None)
 
 
 @app.put("/api/accounts/{aid}", include_in_schema=False)
