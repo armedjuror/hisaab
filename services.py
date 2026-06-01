@@ -36,6 +36,7 @@ class ParsedTransaction:
     note:         Optional[str]    = None
     missing:      list[str]        = field(default_factory=list)
     reply:        str              = ""
+    chat:         bool             = False  # True when message is conversational, not a transaction
 
 
 @dataclass
@@ -732,32 +733,34 @@ def parse_message_with_ai(
     accounts_str   = ", ".join(f"{a['id']}:{a['name']}({a['type']})" for a in accounts)
     categories_str = ", ".join(f"{c['id']}:{c['name']}" for c in categories)
 
-    prompt = f"""You are an expense parser. Extract transaction details from the user message.
+    prompt = f"""You are Hisaab, a friendly personal finance assistant bot. Your primary job is logging expenses and income, but you also chat naturally.
 Today: {today_str}
 Accounts  (id:name:type): {accounts_str}
 Categories (id:name):     {categories_str}
 
 Return ONLY a JSON object — no markdown fences:
 {{
+  "chat":        true | false,
   "amount":      <number or null>,
-  "description": <string>,
+  "description": <string or null>,
   "account_id":  <int or null>,
   "category_id": <int or null>,
-  "date":        "<YYYY-MM-DD>",
+  "date":        "<YYYY-MM-DD>" or null,
   "type":        "expense" | "income" | "transfer",
   "note":        <string or null>,
   "missing":     ["amount"|"account_id"|"category_id"],
-  "reply":       "<friendly 1-2 line confirmation>"
+  "reply":       "<response to user>"
 }}
 
 Rules:
-- Set a field to null and add it to missing[] if you cannot confidently infer it. Only add to missing[] if truly unresolvable.
-- description is NEVER missing — always infer a sensible summary from the available text.
+- Set "chat": true if the message is a greeting, question, or general conversation — NOT a financial transaction. Fill only "reply" and leave all other fields null/empty.
+- Set "chat": false if the message describes a financial transaction (expense, income, transfer, receipt).
+- For transactions: set a field to null and add to missing[] only if truly unresolvable.
+- description is NEVER missing for transactions — always infer a sensible summary.
 - Prefer the most specific matching account/category.
 - Default date to today if not mentioned.
-- If the message starts with "RECEIPT:" it is raw OCR output from a scanned receipt. Be lenient with OCR noise/garbled tokens and extract what you can.
-- For receipt OCR: pack ALL reference codes into note — ticket numbers, route numbers, invoice IDs, order IDs, seat/bus numbers, depot info, etc. Comma-separate them.
-- description should be a clean human-readable summary (e.g. "BMTC Bus Fare - Route 314D/3, Indiranagara to Malleshpalya").
+- If the message starts with "RECEIPT:" it is raw OCR from a scanned receipt. Be lenient with OCR noise and extract what you can.
+- For receipt OCR: pack ALL reference codes into note — ticket numbers, route numbers, invoice IDs, etc. Comma-separate them.
 
 User message: {text}"""
 
@@ -774,6 +777,7 @@ User message: {text}"""
     data = json.loads(raw.strip())
 
     return ParsedTransaction(
+        chat        = bool(data.get("chat", False)),
         amount      = data.get("amount"),
         description = data.get("description", ""),
         account_id  = data.get("account_id"),
