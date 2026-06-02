@@ -723,49 +723,65 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
         from services import get_group_members, create_group_expense
         from datetime import date as _date
 
-        # Extract @mentions via Telegram message entities
+        # Extract mentions from Telegram entities:
+        #   "mention"      → text contains @username (user has a public username)
+        #   "text_mention" → entity contains user.id (user has no public username)
         text = msg.text or ""
         entities = raw_message.get("entities", [])
-        mentions = [
-            text[e["offset"]: e["offset"] + e["length"]].lstrip("@")
-            for e in entities
-            if e.get("type") == "mention"
-        ]
+        mention_usernames: list[str] = []   # @handle without @
+        mention_tg_ids: list[str] = []       # numeric Telegram user IDs
+
+        for e in entities:
+            if e.get("type") == "mention":
+                mention_usernames.append(
+                    text[e["offset"]: e["offset"] + e["length"]].lstrip("@")
+                )
+            elif e.get("type") == "text_mention":
+                tid = str(e.get("user", {}).get("id", ""))
+                if tid:
+                    mention_tg_ids.append(tid)
 
         all_members = get_group_members(group.id, db)
 
-        def _find_by_username(uname: str):
-            ul = uname.lower()
-            for m in all_members:
-                if m.get("username") and m["username"].lower() == ul:
-                    return m
-            for m in all_members:
-                if m["display_name"].lower() == ul:
-                    return m
+        def _find_tagged() -> Optional[dict]:
+            # text_mention: match by real Telegram ID stored as platform_user_id
+            for tid in mention_tg_ids:
+                for m in all_members:
+                    if m.get("platform_user_id") == tid:
+                        return m
+            # mention: match by @username
+            for uname in mention_usernames:
+                ul = uname.lower()
+                for m in all_members:
+                    if m.get("username") and m["username"].lower() == ul:
+                        return m
+                # Fallback: display name match
+                for m in all_members:
+                    if m["display_name"].lower() == ul:
+                        return m
             return None
 
-        if not mentions:
-            # No tag — re-ask for the first unresolved name
+        no_tag = not mention_usernames and not mention_tg_ids
+
+        if no_tag:
+            # No Telegram tag detected — ask the unknown person to send a message
             await self.send_message(
                 msg.chat_id,
                 f"I still need to identify *{pending.unresolved[0]}*. "
-                f"Please @tag them in this chat.",
+                f"Please ask them to send any message in this group, "
+                f"and I'll add them automatically.",
             )
             return True
 
-        # Try to match the first mention to a group member
-        matched = None
-        for uname in mentions:
-            matched = _find_by_username(uname)
-            if matched:
-                break
+        matched = _find_tagged()
 
         if not matched:
+            # Tagged user hasn't messaged in the group yet
             await self.send_message(
                 msg.chat_id,
-                f"Couldn't find the tagged user in this group yet — they need to send "
-                f"a message here first. Please ask *{pending.unresolved[0]}* to say something, "
-                f"then @tag them again.",
+                f"The tagged user hasn't sent a message in this group yet. "
+                f"Please ask *{pending.unresolved[0]}* to say something here first, "
+                f"then tag them again.",
             )
             return True
 
