@@ -215,13 +215,14 @@ class AuthFlowMixin:
             await self.send_message(
                 chat_id,
                 f"We sent a 6-digit verification code to *{email}*.\n\n"
-                "Enter it here to continue:",
+                "Enter it here to continue. Send `/resend` if you didn't receive it.",
             )
         else:
             await self.send_message(
                 chat_id,
-                f"Enter the 6-digit code sent to *{email}*:\n\n"
-                "_(Email delivery unavailable — check server logs)_",
+                f"Enter the 6-digit code sent to *{email}*.\n\n"
+                "_(Email delivery unavailable — check server logs)_\n\n"
+                "Send `/resend` to try again.",
             )
         return None
 
@@ -232,7 +233,28 @@ class AuthFlowMixin:
         chat_id  = msg.chat_id
         code     = (msg.text or "").strip()
 
-        from datetime import datetime
+        from datetime import datetime, timedelta
+        from email_service import send_email_otp
+
+        # Resend request
+        if code.lower() in ("/resend", "resend"):
+            import random
+            email   = state_row.temp_email
+            name    = state_row.temp_name or "there"
+            otp     = f"{random.randint(0, 999999):06d}"
+            expires = datetime.utcnow() + timedelta(minutes=10)
+            sent    = send_email_otp(to_email=email, name=name, otp=otp)
+            auth_service.set_bot_state(
+                platform, chat_id, "awaiting_email_otp", db,
+                temp_name=state_row.temp_name, temp_email=email,
+                temp_otp=otp, temp_otp_expires_at=expires,
+            )
+            if sent:
+                await self.send_message(chat_id, f"A new code has been sent to *{email}*. Enter it here:")
+            else:
+                await self.send_message(chat_id, "Couldn't send email right now. Try again in a moment.")
+            return None
+
         if not state_row.temp_otp or not state_row.temp_otp_expires_at:
             await self.send_message(chat_id, "Something went wrong. Please start over by sending your email again.")
             auth_service.clear_bot_state(platform, chat_id, db)
@@ -241,14 +263,12 @@ class AuthFlowMixin:
         if datetime.utcnow() > state_row.temp_otp_expires_at:
             await self.send_message(
                 chat_id,
-                "That code has expired. Send your email again to get a new one.",
+                "That code has expired. Send `/resend` to get a new one.",
             )
-            auth_service.set_bot_state(platform, chat_id, "awaiting_email", db,
-                                       temp_name=state_row.temp_name)
             return None
 
         if code != state_row.temp_otp:
-            await self.send_message(chat_id, "Invalid code. Please try again:")
+            await self.send_message(chat_id, "Invalid code. Please try again, or send `/resend` for a new one:")
             return None
 
         # Code verified — proceed to currency
@@ -306,19 +326,32 @@ class AuthFlowMixin:
             else:
                 user = auth_service.create_user(name=name, email=email, primary_bot=platform, db=db, currency=code)
                 auth_service.link_bot_identity(user.id, platform, chat_id, db)
-        auth_service.create_session(user.id, db)
+        session = auth_service.create_session(user.id, db)
         from services import create_account
         from models import AccountType
         create_account(db, name="Cash", type=AccountType.cash, user_id=user.id,
                        color=_account_color(AccountType.cash), is_protected=True)
-        auth_service.set_bot_state(platform, chat_id, "awaiting_accounts_setup", db, user_id=user.id)
-        await self.send_message(
-            chat_id,
-            f"✅ Welcome, *{user.name}*! Currency set to *{code}*.\n\n"
-            "Tell me what other accounts you use — one at a time.\n"
-            "Examples: *HDFC Savings bank*, *HDFC Credit Card*, *Amazon Pay wallet*\n\n"
-            "Say *done* when finished.",
-        )
+        auth_service.clear_bot_state(platform, chat_id, db)
+
+        import os
+        base_url = os.getenv("APP_BASE_URL", "").rstrip("/")
+        if base_url:
+            magic_url = f"{base_url}/auth/magic?token={session.token}&next=/app%23accounts"
+            await self.send_message(
+                chat_id,
+                f"✅ Welcome, *{user.name}*! Currency set to *{code}*.\n\n"
+                f"👉 [Add your spending accounts]({magic_url})\n\n"
+                "_Tap the link to open PocketLog — you'll be logged in automatically. "
+                "You can always add more accounts from the dashboard later._",
+            )
+        else:
+            await self.send_message(
+                chat_id,
+                f"✅ Welcome, *{user.name}*! Currency set to *{code}*.\n\n"
+                "You're all set! Send me a message like:\n"
+                "  _spent 500 on groceries_\n"
+                "  _paid 1200 rent from HDFC_",
+            )
         return None
 
     async def _handle_otp(

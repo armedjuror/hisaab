@@ -121,6 +121,29 @@ def dashboard(web_user=Depends(get_web_user)):
     return FileResponse("static/index.html")
 
 
+@app.get("/auth/magic", include_in_schema=False)
+def magic_link(
+    token: str,
+    next: str = "/app",
+    db: Session = Depends(get_db),
+):
+    """One-click login via a magic link token (used after bot signup)."""
+    from models import UserSession
+    from datetime import datetime
+    session = db.query(UserSession).filter_by(token=token).first()
+    if not session or session.expires_at < datetime.utcnow():
+        return RedirectResponse("/login?error=expired", status_code=302)
+    redirect = RedirectResponse(next, status_code=302)
+    redirect.set_cookie(
+        key="pocketlog_session",
+        value=token,
+        max_age=30 * 24 * 3600,
+        httponly=True,
+        samesite="lax",
+    )
+    return redirect
+
+
 @app.get("/api/config", include_in_schema=False)
 def public_config():
     import os
