@@ -105,39 +105,41 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
     @staticmethod
     def _help_text() -> str:
         return (
-            "*Expenses & income* — text or 🎙️ voice note:\n"
+            "*Log expenses & income* — text or 🎙️ voice note:\n"
             "  `spent 450 on lunch`\n"
             "  `paid 1200 electricity from HDFC`\n"
-            "  `got salary 85000`\n\n"
+            "  `got salary 85000`\n"
+            "  `Spent 500 from OneCard for groceries`\n\n"
             "*Lending:*\n"
             "  `lent 2000 to Rahul`\n"
             "  `borrowed 5000 from Priya`\n"
-            "  `who owes me` — unsettled lent amounts\n"
-            "  `what do I owe` — unsettled borrowed amounts\n\n"
+            "  `Rahul settled 2000`\n\n"
+            "*Commands:*\n"
+            "  /accounts — your account balances\n"
+            "  /transactions — this month's transactions\n"
+            "  /categories — available categories\n"
+            "  /lendings — unsettled lending records\n"
+            "  /budget — this month's budget status\n"
+            "  /report — this month's summary\n"
+            "  /report last — last month\n"
+            "  /report jan — January (add year: `jan 2024`)\n"
+            "  /report trend — 6-month spending trend\n"
+            "  /groups — your groups\n"
+            "  /channels — linked bots/channels\n"
+            "  /apikey — your API access token\n"
+            "  /resend — resend OTP\n"
+            "  /help — show this message\n\n"
             "*Group splits (in group chats):*\n"
             "  `split 1200 lunch` — split equally among all\n"
             "  `split 1200 lunch between Alice, Bob` — named split\n"
             "  `split 1200 lunch 1:2:3 between Alice, Bob, Priya` — ratio split\n"
             "  /groupbalance — show who owes whom\n"
             "  /simplify — minimise number of payments\n\n"
-            "*Quick queries:*\n"
-            "  `my accounts` — balances\n"
-            "  `my categories` — list categories\n"
-            "  `my budgets` — this month's budget progress\n"
-            "  `what did I spend today`\n\n"
-            "*Reports:*\n"
-            "  /report — this month's summary\n"
-            "  /report last — last month\n"
-            "  /report jan — January (add year: `jan 2024`)\n"
-            "  /report trend — 6-month spending trend\n\n"
-            "*Accounts:*\n"
-            "  `my accounts` — list balances\n"
-            "  `add HDFC Savings as bank account` — create account\n"
-            "  `delete all accounts` — remove all your accounts\n\n"
-            "*Other:*\n"
-            "  /channels — show your linked bots/channels\n"
-            "  /apikey — get your API access token\n"
-            "  /help — show this message\n"
+            "*Natural queries:*\n"
+            "  `what did I spend today`\n"
+            "  `show my expenses this month`\n"
+            "  `who owes me` / `what do I owe`\n"
+            "  `my budgets`\n"
         )
 
     async def _get_bot_username(self) -> str:
@@ -255,14 +257,15 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
         msg.user_id = user.id
 
         text = (msg.text or "").strip()
+        cmd  = text.lower().split()[0] if text.startswith("/") else None
 
         # ── /help ─────────────────────────────────────────────────────────
-        if text.lower() == "/help":
+        if cmd == "/help":
             await self.send_message(msg.chat_id, self._help_text())
             return
 
-        # ── /apikey — return the user's Personal Access Token ─────────────
-        if text.lower() == "/apikey":
+        # ── /apikey ───────────────────────────────────────────────────────
+        if cmd == "/apikey":
             import oauth_service as _oas
             session = _oas.get_or_create_session(user.id, db)
             await self.send_message(
@@ -271,6 +274,110 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
                 f"Use it as:\n`Authorization: Bearer {session.token}`\n\n"
                 f"Valid for 30 days. Keep it secret.",
             )
+            return
+
+        # ── /accounts ─────────────────────────────────────────────────────
+        if cmd in ("/accounts", "/account"):
+            reply = self.maybe_list_accounts(msg, db)
+            await self.send_message(msg.chat_id, reply or "No accounts found.")
+            return
+
+        # ── /categories ───────────────────────────────────────────────────
+        if cmd in ("/categories", "/category"):
+            from services import get_categories
+            cats = get_categories(db)
+            if not cats:
+                await self.send_message(msg.chat_id, "No categories found.")
+            else:
+                lines = ["*Categories:*\n"] + [f"  {c['icon']}  {c['name']}" for c in cats]
+                await self.send_message(msg.chat_id, "\n".join(lines))
+            return
+
+        # ── /transactions ─────────────────────────────────────────────────
+        if cmd in ("/transactions", "/transaction"):
+            from datetime import date as _date
+            from services import list_transactions, format_transactions_list_message, \
+                get_user_currency, currency_symbol
+            today = _date.today()
+            result = list_transactions(db, month=today.month, year=today.year, limit=100, user_id=msg.user_id)
+            currency = get_user_currency(db, msg.user_id)
+            reply = format_transactions_list_message(
+                result["items"], currency=currency,
+                start_date=today.replace(day=1), end_date=today,
+            )
+            await self.send_message(msg.chat_id, reply)
+            return
+
+        # ── /lendings ─────────────────────────────────────────────────────
+        if cmd in ("/lendings", "/lending", "/loans"):
+            from services import list_lending, get_user_currency, currency_symbol
+            sym = currency_symbol(get_user_currency(db, msg.user_id))
+            records = list_lending(db, settled=False, user_id=msg.user_id)
+            if not records:
+                await self.send_message(msg.chat_id, "No outstanding lending records.")
+                return
+            lines = ["*Unsettled Lending:*\n"]
+            for r in records:
+                arrow = "→" if r["type"] == "lent" else "←"
+                lines.append(f"  {arrow} *{r['person_name']}*: {sym}{r['outstanding']:,.0f}")
+            await self.send_message(msg.chat_id, "\n".join(lines))
+            return
+
+        # ── /budget / /budgets ────────────────────────────────────────────
+        if cmd in ("/budget", "/budgets"):
+            from datetime import date as _date
+            from services import list_budgets, get_user_currency, currency_symbol
+            today = _date.today()
+            budgets = list_budgets(db, today.month, today.year, user_id=msg.user_id)
+            if not budgets:
+                await self.send_message(msg.chat_id, f"No budgets set for {today.strftime('%B %Y')}. Add them from the dashboard.")
+                return
+            sym   = currency_symbol(get_user_currency(db, msg.user_id))
+            lines = [f"*Budgets — {today.strftime('%B %Y')}:*\n"]
+            for b in budgets:
+                icon    = b.get("category_icon", "💰")
+                name    = b.get("category_name", "")
+                spent   = b.get("spent", 0) or 0
+                total   = b.get("budget_amount") or b.get("amount") or 0
+                remaining = b.get("remaining", total - spent)
+                pct     = round(spent / total * 100) if total else 0
+                filled  = min(10, pct // 10)
+                bar     = "█" * filled + "░" * (10 - filled)
+                status  = "⚠️" if pct >= 90 else ("🔶" if pct >= 70 else "✅")
+                lines.append(
+                    f"  {status} {icon} *{name}*\n"
+                    f"     {bar} {pct}%\n"
+                    f"     {sym}{spent:,.0f} of {sym}{total:,.0f}  ({sym}{remaining:,.0f} left)"
+                )
+            await self.send_message(msg.chat_id, "\n".join(lines))
+            return
+
+        # ── /report [period] ──────────────────────────────────────────────
+        if cmd == "/report":
+            from services import parse_report_request, generate_report
+            period_text = text[len("/report"):].strip() or "/report"
+            period = parse_report_request(period_text) or parse_report_request("/report")
+            report = generate_report(db, period, user_id=msg.user_id)
+            await self.send_message(msg.chat_id, report or "No report data.")
+            return
+
+        # ── /groups ───────────────────────────────────────────────────────
+        if cmd == "/groups":
+            from services import get_user_groups
+            groups = get_user_groups(user.id, db)
+            if not groups:
+                await self.send_message(msg.chat_id, "You're not in any groups yet.")
+            else:
+                lines = ["*Your groups:*\n"] + [
+                    f"  • *{g['name']}*{' (closed)' if g.get('is_closed') else ''}"
+                    for g in groups
+                ]
+                await self.send_message(msg.chat_id, "\n".join(lines))
+            return
+
+        # ── /resend — re-send OTP to current session ─────────────────────
+        if cmd == "/resend":
+            await self._send_otp_here(user, self.name, msg.chat_id, db)
             return
 
         # ── Voice / audio note? Transcribe with Whisper ───────────────────
@@ -363,6 +470,12 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
                 await self.send_message(msg.chat_id, lending_reply)
                 return
 
+            # ── Transaction list? ─────────────────────────────────────────────
+            txn_list_reply = self.maybe_list_transactions(msg, db)
+            if txn_list_reply is not None:
+                await self.send_message(msg.chat_id, txn_list_reply)
+                return
+
             # ── Report request? ───────────────────────────────────────────────
             report = await self.maybe_get_report(msg, db)
             if report is not None:
@@ -373,6 +486,45 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
         # If there's a pending transaction awaiting missing fields, combine contexts
         pending = _pending.get(msg.chat_id)
         parse_text = msg.text or ""
+
+        # Try to resolve pending missing fields locally (no AI needed)
+        if pending and pending.parsed.missing:
+            from services import get_categories, get_accounts
+            user_text = (msg.text or "").strip().lower()
+            resolved_any = False
+
+            if "category_id" in pending.parsed.missing:
+                for c in get_categories(db):
+                    if c["name"].lower() == user_text or c["name"].lower() in user_text:
+                        pending.parsed.category_id = c["id"]
+                        pending.parsed.missing = [f for f in pending.parsed.missing if f != "category_id"]
+                        resolved_any = True
+                        break
+
+            if "account_id" in pending.parsed.missing:
+                for a in get_accounts(db, user_id=msg.user_id):
+                    if a["name"].lower() == user_text or a["name"].lower() in user_text:
+                        pending.parsed.account_id = a["id"]
+                        pending.parsed.missing = [f for f in pending.parsed.missing if f != "account_id"]
+                        resolved_any = True
+                        break
+
+            if resolved_any and not pending.parsed.missing:
+                _pending.pop(msg.chat_id, None)
+                try:
+                    self.save(pending.parsed, db, msg)
+                except Exception as exc:
+                    log.exception("Save failed after local resolution")
+                    await self.send_message(msg.chat_id, f"Couldn't save: {exc}")
+                    return
+                warning = self.budget_warning(pending.parsed, db, user_id=msg.user_id)
+                await self.send_message(msg.chat_id, (pending.parsed.reply or "Logged!") + warning)
+                return
+            elif resolved_any:
+                # Still missing some fields — ask again
+                await self.send_message(msg.chat_id, self.missing_prompt(pending.parsed, db=db, user_id=msg.user_id))
+                return
+
         if pending:
             # Merge reply into original message so AI has full context
             parse_text = f"{pending.original_text}\nMissing info provided by user: {msg.text}"
@@ -393,9 +545,71 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
             await self.send_message(msg.chat_id, f"Couldn't parse that: {exc}")
             return
 
-        # Treat as chat if AI flagged it, or if there's no amount and nothing is missing
+        # ── Handle non-transaction actions returned by AI ─────────────────
+        if parsed.action == "chat" or (parsed.chat and parsed.action not in (
+            "transaction", "list_transactions", "list_accounts",
+            "list_categories", "list_budgets", "list_lending", "report"
+        )):
+            _pending.pop(msg.chat_id, None)
+            await self.send_message(msg.chat_id, parsed.reply or "Hey! Send me an expense or income to log.")
+            return
+
+        if parsed.action == "list_transactions":
+            _pending.pop(msg.chat_id, None)
+            from datetime import date as _date
+            from services import list_transactions, format_transactions_list_message, get_user_currency
+            today = _date.today()
+            start = parsed.start_date or today.replace(day=1)
+            end   = parsed.end_date   or today
+            result = list_transactions(
+                db, month=start.month if start.month == end.month else None,
+                year=start.year if start.month == end.month else None,
+                limit=100, user_id=msg.user_id,
+            )
+            items = result["items"]
+            if start != today.replace(day=1) or end != today:
+                items = [t for t in items if start.isoformat() <= t["date"] <= end.isoformat()]
+            reply = format_transactions_list_message(
+                items, currency=get_user_currency(db, msg.user_id), start_date=start, end_date=end
+            )
+            await self.send_message(msg.chat_id, reply)
+            return
+
+        if parsed.action == "list_accounts":
+            _pending.pop(msg.chat_id, None)
+            reply = self.maybe_list_accounts(msg, db)
+            await self.send_message(msg.chat_id, reply or "No accounts found.")
+            return
+
+        if parsed.action == "list_categories":
+            _pending.pop(msg.chat_id, None)
+            from services import get_categories
+            cats = get_categories(db)
+            lines = ["*Categories:*\n"] + [f"  {c['icon']}  {c['name']}" for c in cats]
+            await self.send_message(msg.chat_id, "\n".join(lines) if cats else "No categories found.")
+            return
+
+        if parsed.action == "list_budgets":
+            _pending.pop(msg.chat_id, None)
+            reply = self.maybe_list_budgets(msg, db)
+            await self.send_message(msg.chat_id, reply or "No budgets found.")
+            return
+
+        if parsed.action == "list_lending":
+            _pending.pop(msg.chat_id, None)
+            reply = await self.maybe_handle_lending(msg, db)
+            await self.send_message(msg.chat_id, reply or "No lending records found.")
+            return
+
+        if parsed.action == "report":
+            _pending.pop(msg.chat_id, None)
+            report = await self.maybe_get_report(msg, db)
+            await self.send_message(msg.chat_id, report or "No report data.")
+            return
+
+        # Treat as chat if there's no amount and nothing is missing
         # (AI occasionally misclassifies greetings as transactions with empty missing list)
-        if parsed.chat or (parsed.amount is None and not parsed.missing):
+        if parsed.amount is None and not parsed.missing:
             _pending.pop(msg.chat_id, None)
             await self.send_message(msg.chat_id, parsed.reply or "Hey! Send me an expense or income to log.")
             return
@@ -406,7 +620,7 @@ class TelegramPlugin(AuthFlowMixin, BasePlugin):
                 original_text=pending.original_text if pending else (msg.text or ""),
                 parsed=parsed,
             )
-            await self.send_message(msg.chat_id, self.missing_prompt(parsed))
+            await self.send_message(msg.chat_id, self.missing_prompt(parsed, db=db, user_id=msg.user_id))
             return
 
         # All fields resolved — clear pending and save

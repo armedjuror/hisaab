@@ -469,81 +469,26 @@
     gap: 4px;
   }
 
-  /* ── Accounts grid ── */
-  .accounts-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 14px;
-  }
-  .account-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 20px;
-    position: relative;
-    overflow: hidden;
-    cursor: pointer;
-    transition: border-color var(--transition), transform var(--transition), box-shadow var(--transition);
-  }
-  .account-card:hover {
-    border-color: var(--acc-color, var(--accent));
-    transform: translateY(-2px);
-    box-shadow: 0 8px 30px rgba(0,0,0,.3);
-  }
-  .account-card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: var(--acc-color, var(--accent));
-    opacity: .9;
-  }
-  .account-card-glow {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 60px;
-    background: linear-gradient(180deg, var(--acc-color, var(--accent)), transparent);
-    opacity: .04;
-    pointer-events: none;
+  /* ── Accounts table ── */
+  .acc-color-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: inline-block;
+    margin-right: 8px;
+    vertical-align: middle;
   }
   .acc-type-badge {
     font-size: 10.5px;
     color: var(--muted);
     text-transform: uppercase;
     letter-spacing: .8px;
-    margin-bottom: 10px;
     font-weight: 600;
   }
-  .acc-name {
-    font-family: var(--font-head);
-    font-size: 15px;
-    font-weight: 700;
-    margin-bottom: 14px;
-    letter-spacing: -.2px;
-  }
-  .acc-balance { font-size: 24px; font-weight: 700; letter-spacing: -.5px; }
+  .acc-balance { font-weight: 700; }
   .acc-balance.negative { color: var(--red); }
-  .acc-meta { font-size: 11.5px; color: var(--text2); margin-top: 5px; }
-  .acc-actions { display: flex; gap: 7px; margin-top: 14px; }
-
-  /* Credit card utilization */
-  .cc-util-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    margin-top: 12px;
-    margin-bottom: 5px;
-    font-size: 11.5px;
-  }
-  .cc-util-label { color: var(--text2); }
-  .cc-util-value { font-weight: 600; }
-  .cc-available { color: var(--green); }
-  .cc-available.low { color: var(--yellow); }
-  .cc-available.critical { color: var(--red); }
+  .acc-meta { font-size: 11.5px; color: var(--text2); }
   .acc-tag {
     display: inline-flex;
     align-items: center;
@@ -554,22 +499,22 @@
     text-transform: uppercase;
     padding: 2px 7px;
     border-radius: 4px;
-    margin-bottom: 8px;
   }
   .acc-tag-addon { background: var(--blue-dim); color: var(--blue); }
 
-  /* Progress bar (for account) */
+  /* Progress bar (for account table) */
   .acc-progress-bg {
     height: 4px;
     background: var(--surface3);
     border-radius: 4px;
     overflow: hidden;
-    margin-top: 10px;
+    margin-top: 4px;
+    width: 120px;
   }
   .acc-progress-fill {
     height: 100%;
     border-radius: 4px;
-    background: linear-gradient(90deg, var(--acc-color, var(--accent)), var(--accent2));
+    background: var(--accent);
     transition: width .5s;
   }
 
@@ -972,8 +917,8 @@
     .bottom-nav { display: flex; }
     /* Hide hamburger since we have bottom nav */
     .hamburger { display: none; }
-    /* Account cards: single column */
-    .accounts-grid { grid-template-columns: 1fr; }
+    /* Accounts table — hide details col on small screens */
+    .acc-details-col { display: none; }
     /* Groups */
     .groups-layout { gap: 12px; }
     /* Lending */
@@ -1221,7 +1166,7 @@
             <i data-lucide="plus"></i> New Account
           </button>
         </div>
-        <div class="accounts-grid" id="accountsGrid"></div>
+        <div class="table-wrap" id="accountsGrid"></div>
       </div>
 
       <!-- BUDGETS -->
@@ -1691,10 +1636,11 @@
 <div class="modal-overlay" id="budgetModal">
   <div class="modal">
     <div class="modal-head">
-      <h2>Set Budget</h2>
+      <h2 id="budgetModalTitle">Set Budget</h2>
       <button class="close-btn" onclick="closeModal('budgetModal')">&#x2715;</button>
     </div>
     <div class="modal-body">
+      <input type="hidden" id="editBudgetId">
       <div class="form-row">
         <label>Category</label>
         <select id="budgetCategory"></select>
@@ -2232,19 +2178,17 @@ async function saveTxn() {
 async function loadAccounts() {
   const el = document.getElementById('accountsGrid');
   if (!accounts.length) {
-    el.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="empty-icon">&#x1F4B3;</div><p>No accounts yet. Add one to get started.</p></div>`;
+    el.innerHTML = `<div class="empty"><div class="empty-icon">&#x1F4B3;</div><p>No accounts yet. Add one to get started.</p></div>`;
     return;
   }
-  el.innerHTML = accounts.map(a => {
+  const rows = accounts.map(a => {
     const isCC = a.type === 'credit_card';
     const parentName = a.shared_limit_account_id
       ? (accounts.find(x => x.id === a.shared_limit_account_id) || {}).name || 'Primary card'
       : null;
 
-    // Credit utilization
-    let ccBlock = '';
+    let detailsHtml = '';
     if (isCC) {
-      // Determine group: primary card + all add-ons
       const isPrimary = !!a.credit_limit && !a.shared_limit_account_id;
       const parent = !isPrimary ? accounts.find(x => x.id === a.shared_limit_account_id) : null;
       const primaryCard = isPrimary ? a : parent;
@@ -2253,47 +2197,48 @@ async function loadAccounts() {
         const combinedOutstanding = allInGroup.reduce((s, x) => s + (x.outstanding || 0), 0);
         const combinedAvailable = primaryCard.credit_limit - combinedOutstanding;
         const util = combinedOutstanding / primaryCard.credit_limit * 100;
-        const availClass = util > 85 ? 'critical' : util > 65 ? 'low' : '';
         const barColor = util > 85 ? 'var(--red)' : util > 65 ? 'var(--yellow)' : 'var(--green)';
-        ccBlock = `
-          <div class="cc-util-row">
-            <span class="cc-util-label">Available</span>
-            <span class="cc-util-value cc-available ${availClass}">&#8377;${fmt(combinedAvailable)}</span>
-          </div>
-          <div class="acc-progress-bg">
+        detailsHtml = `
+          <div style="font-size:11.5px;color:var(--text2)">Avail <span style="color:${barColor};font-weight:600">&#8377;${fmt(combinedAvailable)}</span> / &#8377;${fmt(primaryCard.credit_limit)}</div>
+          <div class="acc-progress-bg" style="width:100px">
             <div class="acc-progress-fill" style="width:${Math.min(util,100).toFixed(1)}%;background:${barColor}"></div>
-          </div>
-          <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:11px;color:var(--muted)">
-            <span>&#8377;${fmt(combinedOutstanding)} used</span>
-            <span>&#8377;${fmt(primaryCard.credit_limit)} limit</span>
           </div>`;
       }
+    } else if (a.total_amount) {
+      const pct = Math.min(Math.abs(a.balance / a.total_amount) * 100, 100);
+      detailsHtml = `
+        <div style="font-size:11.5px;color:var(--text2)">&#8377;${fmt(a.balance)} of &#8377;${fmt(a.total_amount)}</div>
+        <div class="acc-progress-bg" style="width:100px"><div class="acc-progress-fill" style="width:${pct.toFixed(1)}%"></div></div>`;
+    }
+    if (a.monthly_emi) {
+      detailsHtml += `<div class="acc-meta">EMI &#8377;${fmt(a.monthly_emi)}/mo &middot; Due ${a.due_date}th</div>`;
     }
 
-    return `
-    <div class="account-card" style="--acc-color:${a.color}">
-      <div class="account-card-glow"></div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <div class="acc-type-badge" style="margin:0">${a.type.replace(/_/g,' ')}</div>
-        ${parentName ? `<span class="acc-tag acc-tag-addon">Add-on &middot; ${parentName}</span>` : ''}
-      </div>
-      <div class="acc-name">${a.name}</div>
-      <div class="acc-balance ${a.balance < 0 ? 'negative' : ''}">&#8377;${fmt(a.balance)}</div>
-      ${a.monthly_emi ? `<div class="acc-meta">EMI &#8377;${fmt(a.monthly_emi)}/mo &middot; Due ${a.due_date}th</div>` : ''}
-      ${a.total_amount && !isCC ? `
-        <div style="margin-top:10px">
-          <div style="font-size:11.5px;color:var(--text2);margin-bottom:5px">&#8377;${fmt(a.balance)} of &#8377;${fmt(a.total_amount)}</div>
-          <div class="acc-progress-bg">
-            <div class="acc-progress-fill" style="width:${Math.min(Math.abs(a.balance/a.total_amount)*100,100)}%"></div>
-          </div>
-        </div>` : ''}
-      ${ccBlock}
-      <div class="acc-actions">
-        <button class="btn btn-ghost btn-sm" onclick="editAccount(${a.id})">Edit</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteAccount(${a.id})">Delete</button>
-      </div>
-    </div>`;
+    return `<tr>
+      <td>
+        <span class="acc-color-dot" style="background:${a.color}"></span>
+        <span style="font-weight:600">${a.name}</span>
+        ${parentName ? `<span class="acc-tag acc-tag-addon" style="margin-left:6px">Add-on &middot; ${parentName}</span>` : ''}
+      </td>
+      <td><span class="acc-type-badge">${a.type.replace(/_/g,' ')}</span></td>
+      <td class="acc-balance ${a.balance < 0 ? 'negative' : ''}">&#8377;${fmt(a.balance)}</td>
+      <td class="acc-details-col">${detailsHtml}</td>
+      <td>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost btn-sm" onclick="editAccount(${a.id})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteAccount(${a.id})">Delete</button>
+        </div>
+      </td>
+    </tr>`;
   }).join('');
+
+  el.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Name</th><th>Type</th><th>Balance</th><th class="acc-details-col">Details</th><th>Actions</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
 }
 
 function populateCCSharedSelect(selectedId = '') {
@@ -2400,7 +2345,7 @@ async function loadBudgets() {
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>Category</th><th>Budget</th><th>Spent</th><th>Remaining</th><th>Progress</th>
+          <th>Category</th><th>Budget</th><th>Spent</th><th>Remaining</th><th>Progress</th><th>Actions</th>
         </tr></thead>
         <tbody>
           ${budgets.map(b => `
@@ -2418,19 +2363,48 @@ async function loadBudgets() {
                   ${b.over_pace ? `<span style="color:var(--yellow);font-size:11px">over pace</span>` : ''}
                 </div>
               </td>
+              <td>
+                <div style="display:flex;gap:6px">
+                  <button class="btn btn-ghost btn-sm" onclick="editBudget(${b.id},${b.category_id},'${(b.category_name||'').replace(/'/g,"\\'")}',${b.amount})">Edit</button>
+                  <button class="btn btn-danger btn-sm" onclick="deleteBudget(${b.id})">Delete</button>
+                </div>
+              </td>
             </tr>`).join('')}
         </tbody>
       </table>
     </div>`;
 }
 
-function openAddBudget() { openModal('budgetModal'); }
+function openAddBudget() {
+  document.getElementById('budgetModalTitle').textContent = 'Set Budget';
+  document.getElementById('editBudgetId').value = '';
+  document.getElementById('budgetAmount').value = '';
+  document.getElementById('budgetCategory').disabled = false;
+  openModal('budgetModal');
+}
+
+function editBudget(id, catId, catName, amount) {
+  document.getElementById('budgetModalTitle').textContent = 'Edit Budget';
+  document.getElementById('editBudgetId').value = id;
+  document.getElementById('budgetAmount').value = amount;
+  const sel = document.getElementById('budgetCategory');
+  sel.value = catId;
+  sel.disabled = true;
+  openModal('budgetModal');
+}
+
+async function deleteBudget(id) {
+  if (!confirm('Delete this budget?')) return;
+  await api(`/api/budgets/${id}`, 'DELETE');
+  toast('Budget deleted'); loadBudgets();
+}
 
 async function saveBudget() {
   const catId = parseInt(document.getElementById('budgetCategory').value);
   const amount = parseFloat(document.getElementById('budgetAmount').value);
   if (!catId || !amount) { toast('Fill all fields', 'error'); return; }
   await api('/api/budgets', 'POST', { category_id: catId, month: curMonth, year: curYear, amount });
+  document.getElementById('budgetCategory').disabled = false;
   closeModal('budgetModal'); toast('Budget saved'); loadBudgets();
 }
 
@@ -2682,11 +2656,14 @@ function fmt(n) {
 }
 
 function openModal(id) { document.getElementById(id).classList.add('open'); }
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+  if (id === 'budgetModal') document.getElementById('budgetCategory').disabled = false;
+}
 
 document.querySelectorAll('.modal-overlay').forEach(overlay => {
   overlay.addEventListener('click', e => {
-    if (e.target === overlay) overlay.classList.remove('open');
+    if (e.target === overlay) closeModal(overlay.id);
   });
 });
 

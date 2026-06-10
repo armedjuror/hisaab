@@ -488,6 +488,15 @@ def upsert_budget(data: BudgetIn, db: Session = Depends(get_db), web_user=Depend
     return services.upsert_budget(db, data.category_id, data.month, data.year, data.amount, user_id=uid)
 
 
+@app.delete("/api/budgets/{budget_id}", include_in_schema=False)
+def delete_budget(budget_id: int, db: Session = Depends(get_db), web_user=Depends(get_web_user)):
+    uid = web_user.id if web_user else None
+    ok = services.delete_budget(db, budget_id, user_id=uid)
+    if not ok:
+        raise HTTPException(404, "Budget not found")
+    return {"ok": True}
+
+
 # ── Lending ────────────────────────────────────────────────────────────────
 
 @app.get("/api/lending", include_in_schema=False)

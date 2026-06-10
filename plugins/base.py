@@ -243,6 +243,11 @@ class BasePlugin(ABC):
         text = (msg.text or "").strip().lower()
         if not re.search(r"\bcategor(y|ies)\b|/categories", text):
             return None
+        # Don't intercept transaction messages that mention "category" incidentally
+        if re.search(r'\b(spent|spend|paid|pay|bought|got|received|earned|from|for)\b.{0,60}\d', text):
+            return None
+        if re.search(r'\d.{0,60}\b(spent|spend|paid|pay|category|from|for)\b', text):
+            return None
 
         from services import get_categories
         cats = get_categories(db)
@@ -294,6 +299,38 @@ class BasePlugin(ABC):
             lines.append("\n" + "  |  ".join(summary))
 
         return "\n".join(lines)
+
+    def maybe_list_transactions(self, msg: InboundMessage, db) -> Optional[str]:  # noqa: F821
+        """
+        Returns a formatted transaction list if the message asks to view transactions, else None.
+        Catches "what did I spend", "list my expenses", "show transactions", etc.
+        """
+        from services import parse_transaction_list_request, list_transactions, \
+            format_transactions_list_message, get_user_currency, currency_symbol
+        period = parse_transaction_list_request(msg.text or "")
+        if period is None:
+            return None
+
+        start_date, end_date = period
+        # Don't intercept if this looks like a report request (totals, summaries)
+        import re
+        text = (msg.text or "").strip().lower()
+        if re.search(r'\bhow\s+much\b|\bsummary\b|\breport\b|\banalytics\b', text):
+            return None
+
+        result = list_transactions(
+            db,
+            month=start_date.month if start_date.month == end_date.month else None,
+            year=start_date.year if start_date.month == end_date.month else None,
+            limit=100,
+            user_id=msg.user_id,
+        )
+        items = result["items"]
+        if start_date != end_date or start_date.day != 1:
+            items = [t for t in items if start_date.isoformat() <= t["date"] <= end_date.isoformat()]
+
+        currency = get_user_currency(db, msg.user_id)
+        return format_transactions_list_message(items, currency=currency, start_date=start_date, end_date=end_date)
 
     async def maybe_handle_lending(self, msg: InboundMessage, db) -> Optional[str]:  # noqa: F821
         """
@@ -350,9 +387,12 @@ class BasePlugin(ABC):
                 note         = parsed.note,
                 is_settled   = False,
             )
-            return parsed.reply or (
-                f"Logged: {'lent' if parsed.lending_type == 'lent' else 'borrowed'} "
-                f"*{_sym}{parsed.amount:,.0f}* {'to' if parsed.lending_type == 'lent' else 'from'} *{parsed.person}*."
+            verb   = "lent" if parsed.lending_type == "lent" else "borrowed"
+            prep   = "to"   if parsed.lending_type == "lent" else "from"
+            note_str = f" for _{parsed.note}_" if parsed.note else ""
+            return (
+                f"Got it! You {verb} *{_sym}{parsed.amount:,.0f}* {prep} *{parsed.person}*"
+                f"{note_str} on {parsed.date}."
             )
 
         # List intents
@@ -444,10 +484,32 @@ class BasePlugin(ABC):
             "  /apikey          — get your API access token\n"
         )
 
-    @staticmethod
-    def missing_prompt(parsed: "services.ParsedTransaction") -> str:  # noqa: F821
-        fields = ", ".join(parsed.missing)
-        return (
-            f"🤔 Almost there! I couldn't figure out: *{fields}*.\n"
-            "Reply with the missing details and I'll log it."
-        )
+    def missing_prompt(  # noqa: F821
+        self,
+        parsed: "services.ParsedTransaction",
+        db=None,
+        user_id: Optional[int] = None,
+    ) -> str:
+        _name_map = {
+            "category_id":   "category",
+            "account_id":    "account",
+            "to_account_id": "destination account",
+            "amount":        "amount",
+        }
+        human = [_name_map.get(f, f) for f in parsed.missing]
+        parts = [
+            f"🤔 Almost there! I need: {', '.join(f'*{h}*' for h in human)}.",
+        ]
+        if "category_id" in parsed.missing and db is not None:
+            from services import get_categories
+            cats = get_categories(db)
+            cat_lines = "\n".join(f"  {c['icon']}  {c['name']}" for c in cats)
+            parts.append(f"\nPick a category:\n{cat_lines}\n\nReply with the category name.")
+        elif "account_id" in parsed.missing and db is not None:
+            from services import get_accounts
+            accounts = get_accounts(db, user_id=user_id)
+            names = ", ".join(f"*{a['name']}*" for a in accounts)
+            parts.append(f"\nYour accounts: {names}\n\nReply with the account name.")
+        else:
+            parts.append("Reply with the missing details and I'll log it.")
+        return "\n".join(parts)

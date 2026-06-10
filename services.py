@@ -77,12 +77,15 @@ def get_user_currency(db: Session, user_id: Optional[int]) -> str:
 @dataclass
 class ParsedTransaction:
     """What an AI parser returns; not yet saved."""
+    action:         str              = "transaction"  # transaction|list_transactions|list_accounts|list_categories|list_budgets|list_lending|report|chat
     amount:         Optional[float]  = None
     description:    Optional[str]    = None
     account_id:     Optional[int]    = None
     to_account_id:  Optional[int]    = None
     category_id:    Optional[int]    = None
     date:           Optional[date]   = None
+    start_date:     Optional[date]   = None   # for list_transactions
+    end_date:       Optional[date]   = None   # for list_transactions
     type:           str              = "expense"
     note:           Optional[str]    = None
     missing:        list[str]        = field(default_factory=list)
@@ -439,6 +442,18 @@ def upsert_budget(
         db.add(Budget(user_id=user_id, category_id=category_id, month=month, year=year, amount=amount))
     db.commit()
     return {"ok": True}
+
+
+def delete_budget(db: Session, budget_id: int, user_id: Optional[int] = None) -> bool:
+    q = db.query(Budget).filter(Budget.id == budget_id)
+    if user_id is not None:
+        q = q.filter(Budget.user_id == user_id)
+    b = q.first()
+    if not b:
+        return False
+    db.delete(b)
+    db.commit()
+    return True
 
 
 def get_budget_status(
@@ -804,13 +819,14 @@ def parse_message_with_ai(
     accounts_str   = ", ".join(_acc_str(a) for a in accounts)
     categories_str = ", ".join(f"{c['id']}:{c['name']}" for c in categories)
 
-    prompt = f"""You are PocketLog, a friendly personal finance assistant bot. Your primary job is logging expenses and income, but you also chat naturally.
+    prompt = f"""You are PocketLog, a friendly personal finance assistant bot. Your primary job is logging expenses and income, but you also handle queries and chat naturally.
 Today: {today_str}
 Accounts  (id:name:type): {accounts_str}
 Categories (id:name):     {categories_str}
 
 Return ONLY a JSON object — no markdown fences:
 {{
+  "action":         "transaction" | "list_transactions" | "list_accounts" | "list_categories" | "list_budgets" | "list_lending" | "report" | "chat",
   "chat":           true | false,
   "amount":         <number or null>,
   "description":    <string or null>,
@@ -818,15 +834,29 @@ Return ONLY a JSON object — no markdown fences:
   "to_account_id":  <int or null>,
   "category_id":    <int or null>,
   "date":           "<YYYY-MM-DD>" or null,
+  "start_date":     "<YYYY-MM-DD>" or null,
+  "end_date":       "<YYYY-MM-DD>" or null,
   "type":           "expense" | "income" | "transfer",
   "note":           <string or null>,
   "missing":        ["amount"|"account_id"|"category_id"],
   "reply":          "<response to user>"
 }}
 
+Action guide:
+- "transaction": user is logging an expense, income, or transfer — fill financial fields
+- "list_transactions": user wants to see a list of transactions (e.g. "what did I spend", "show my expenses", "what all I spent this month") — set start_date/end_date
+- "list_accounts": user wants to see account balances (e.g. "my accounts", "show balances")
+- "list_categories": user wants to see available categories
+- "list_budgets": user wants to see budget status
+- "list_lending": user wants to see lending/loan records (e.g. "who owes me", "my loans")
+- "report": user wants an analytics summary (e.g. "how much did I spend", "monthly report", "spending summary")
+- "chat": greetings, questions unrelated to finance, or general conversation — fill only "reply", set chat=true
+
+For list_transactions: set start_date = first day of the period, end_date = last day (default to this month if not specified).
+For report/list actions: leave financial fields null, set reply to a friendly acknowledgement.
+
 Rules:
-- Set "chat": true if the message is a greeting, question, or general conversation — NOT a financial transaction. Fill only "reply" and leave all other fields null/empty.
-- Set "chat": false if the message describes a financial transaction (expense, income, transfer, receipt).
+- Set "chat": true only when action="chat".
 - For transactions: set a field to null and add to missing[] only if truly unresolvable.
 - description is NEVER missing for transactions — always infer a sensible summary.
 - Prefer the most specific matching account/category.
@@ -850,14 +880,30 @@ User message: {text}"""
             raw = raw[4:]
     data = json.loads(raw.strip())
 
+    action = data.get("action", "transaction")
+    # Back-compat: if chat=true but action not set, treat as chat
+    if data.get("chat") and action not in ("chat", "list_transactions", "list_accounts",
+                                           "list_categories", "list_budgets", "list_lending", "report"):
+        action = "chat"
+
+    def _parse_date(key):
+        v = data.get(key)
+        try:
+            return date.fromisoformat(v) if v else None
+        except (ValueError, TypeError):
+            return None
+
     return ParsedTransaction(
-        chat           = bool(data.get("chat", False)),
+        action         = action,
+        chat           = bool(data.get("chat", False)) or action == "chat",
         amount         = data.get("amount"),
         description    = data.get("description") or "",
         account_id     = data.get("account_id"),
         to_account_id  = data.get("to_account_id"),
         category_id    = data.get("category_id"),
-        date           = date.fromisoformat(data["date"]) if data.get("date") else (today or date.today()),
+        date           = _parse_date("date") or (today or date.today()),
+        start_date     = _parse_date("start_date"),
+        end_date       = _parse_date("end_date"),
         type           = data.get("type") or "expense",
         note           = data.get("note"),
         missing        = data.get("missing", []),
@@ -950,11 +996,22 @@ _REPORT_TRIGGERS = re.compile(
     r"""
     ^\s*/report | ^\s*/stats | ^\s*/summary | ^\s*/analytics  # explicit commands
     | \bhow\s+much\b                                           # "how much did I spend"
-    | \bshow\s+(me\s+)?(my\s+)?(report|summary|expense|spending|analytics)\b
+    | \bshow\s+(me\s+)?(my\s+)?(report|summary|analytics)\b
     | \b(expense|spending)\s+(report|summary)\b
     | \bmonthly\s+(report|summary|stats)\b
-    | \bwhat\s+.{0,20}(spent|spend|expense|income)\b
     | \b(give|send)\s+me\s+(a\s+)?(report|summary|analytics)\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# Phrases that signal a transaction-list request (distinct from a report)
+_LIST_TXN_TRIGGERS = re.compile(
+    r"""
+    ^\s*/transactions?                                      # explicit command
+    | \b(list|show|see|view)\s+(my\s+)?(transactions?|expenses?|spends?)\b
+    | \bwhat\s+(all\s+)?\w{0,10}\s*(spent|spend|expense)   # "what did I spend", "what all I spent"
+    | \bmy\s+transactions?\b
+    | \brecent\s+(transactions?|expenses?)\b
     """,
     re.VERBOSE | re.IGNORECASE,
 )
@@ -1016,6 +1073,45 @@ def parse_report_request(text: str, today: Optional[date] = None) -> Optional[Re
 
     # ── Default: this month ───────────────────────────────────────────────
     return ReportPeriod(period_type="month", month=today.month, year=today.year)
+
+
+def parse_transaction_list_request(text: str, today: Optional[date] = None) -> Optional[tuple]:
+    """
+    Detect whether `text` is asking to list transactions and return (start_date, end_date).
+    Returns None if not a list request.
+    """
+    if not _LIST_TXN_TRIGGERS.search(text):
+        return None
+
+    today = today or date.today()
+    t = text.lower().strip()
+
+    if "today" in t:
+        return (today, today)
+
+    if re.search(r"\blast\s+month\b|\bprevious\s+month\b", t):
+        first = today.replace(day=1)
+        prev  = first - timedelta(days=1)
+        return (prev.replace(day=1), prev)
+
+    if re.search(r"\blast\s+7\s+days?\b|\bpast\s+7\s+days?\b", t):
+        return (today - timedelta(days=7), today)
+
+    if re.search(r"\bthis\s+week\b|\blast\s+week\b", t):
+        start = today - timedelta(days=today.weekday())
+        return (start, today)
+
+    # Named month
+    for name, num in _MONTH_MAP.items():
+        if re.search(rf"\b{name}\b", t):
+            yr_m = re.search(r"\b(20\d{2})\b", t)
+            year = int(yr_m.group(1)) if yr_m else today.year
+            first_day = date(year, num, 1)
+            last_day  = date(year, num, calendar.monthrange(year, num)[1])
+            return (first_day, last_day)
+
+    # Default: this month
+    return (today.replace(day=1), today)
 
 
 def format_monthly_report(summary: dict, month: int, year: int, currency: str = "INR") -> str:
@@ -1082,6 +1178,68 @@ def format_trend_report(trend: list[dict], months: int, currency: str = "INR") -
     avg   = total / len(trend)
     lines.append(f"\nAvg/month: {sym}{avg:,.0f}   Total: {sym}{total:,.0f}")
     return "\n".join(lines)
+
+
+def format_transactions_list_message(
+    items: list[dict],
+    currency: str = "INR",
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    limit: int = 20,
+) -> str:
+    """Format a list of transactions into a readable bot message."""
+    sym = currency_symbol(currency)
+
+    if not items:
+        period_str = ""
+        if start_date and end_date and start_date != end_date:
+            period_str = f" ({start_date.strftime('%b %d')} – {end_date.strftime('%b %d')})"
+        elif start_date:
+            period_str = f" ({start_date.strftime('%b %d')})"
+        return f"No transactions found{period_str}."
+
+    shown = items[:limit]
+    truncated = len(items) > limit
+
+    # Group by date
+    from collections import defaultdict as _dd
+    by_date: dict[str, list] = _dd(list)
+    for t in shown:
+        by_date[t["date"]].append(t)
+
+    lines: list[str] = []
+    total_expense = sum(t["amount"] for t in shown if str(t.get("type", "")).endswith("expense"))
+    total_income  = sum(t["amount"] for t in shown if str(t.get("type", "")).endswith("income"))
+
+    for d in sorted(by_date.keys(), reverse=True):
+        lines.append(f"\n*{d}*")
+        for t in by_date[d]:
+            t_type = str(t.get("type", "expense"))
+            prefix = "+" if t_type.endswith("income") else "−"
+            cat  = f"  _{t['category_name']}_" if t.get("category_name") else ""
+            acc  = f" ({t['account_name']})" if t.get("account_name") else ""
+            lines.append(f"  {prefix}{sym}{t['amount']:,.0f} {t['description']}{cat}{acc}")
+
+    header_parts = ["📋 *Transactions"]
+    if start_date and end_date and start_date != end_date:
+        header_parts.append(f" ({start_date.strftime('%b %d')} – {end_date.strftime('%b %d')})")
+    elif start_date:
+        header_parts.append(f" ({start_date.strftime('%b %Y')})")
+    header_parts.append("*")
+    header = "".join(header_parts)
+
+    summary_parts = []
+    if total_expense:
+        summary_parts.append(f"Spent: *{sym}{total_expense:,.0f}*")
+    if total_income:
+        summary_parts.append(f"Received: *{sym}{total_income:,.0f}*")
+
+    result = header + "\n" + "\n".join(lines)
+    if summary_parts:
+        result += "\n\n" + "  |  ".join(summary_parts)
+    if truncated:
+        result += f"\n_(showing {limit} of {len(items)} transactions)_"
+    return result
 
 
 def generate_report(
