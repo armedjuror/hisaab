@@ -421,16 +421,17 @@ def list_transactions(
     year:        Optional[int] = None,
     account_id:  Optional[int] = None,
     category_id: Optional[int] = None,
+    type:        Optional[str] = None,
     limit:       int           = 100,
     offset:      int           = 0,
     web_user=Depends(get_web_user),
 ):
     uid = web_user.id if web_user else None
-    return services.list_transactions(db, month, year, account_id, category_id, limit, offset, user_id=uid)
+    return services.list_transactions(db, month, year, account_id, category_id, limit, offset, user_id=uid, type=type)
 
 
 @app.post("/api/transactions", status_code=201, include_in_schema=False)
-def create_transaction(data: TransactionIn, db: Session = Depends(get_db)):
+def create_transaction(data: TransactionIn, db: Session = Depends(get_db), web_user=Depends(get_web_user)):
     return services.create_transaction(
         db,
         amount        = data.amount,
@@ -442,6 +443,7 @@ def create_transaction(data: TransactionIn, db: Session = Depends(get_db)):
         to_account_id = data.to_account_id,
         note          = data.note,
         source_plugin = "web",
+        user_id       = web_user.id if web_user else None,
     )
 
 

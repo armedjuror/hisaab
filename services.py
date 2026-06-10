@@ -294,6 +294,7 @@ def list_transactions(
     limit: int = 100,
     offset: int = 0,
     user_id: Optional[int] = None,
+    type: Optional[str] = None,
 ) -> dict:
     q = db.query(Transaction)
     if user_id is not None:
@@ -307,6 +308,8 @@ def list_transactions(
         q = q.filter(Transaction.account_id == account_id)
     if category_id:
         q = q.filter(Transaction.category_id == category_id)
+    if type:
+        q = q.filter(Transaction.type == TransactionType(type))
     q = q.order_by(Transaction.date.desc(), Transaction.created_at.desc())
     total = q.count()
     items = [_txn_dict(t) for t in q.offset(offset).limit(limit).all()]

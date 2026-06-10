@@ -1169,10 +1169,16 @@
       <!-- TRANSACTIONS -->
       <div class="page" id="page-transactions">
         <div class="txn-filters-row" id="txnFilters" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-          <select id="filterAccount" onchange="loadTransactions()" class="topbar-select" style="flex:1;min-width:130px">
+          <select id="filterType" onchange="txnPage=0;loadTransactions()" class="topbar-select" style="flex:1;min-width:110px">
+            <option value="">All Types</option>
+            <option value="expense">Expense</option>
+            <option value="income">Income</option>
+            <option value="transfer">Transfer</option>
+          </select>
+          <select id="filterAccount" onchange="txnPage=0;loadTransactions()" class="topbar-select" style="flex:1;min-width:130px">
             <option value="">All Accounts</option>
           </select>
-          <select id="filterCategory" onchange="loadTransactions()" class="topbar-select" style="flex:1;min-width:130px">
+          <select id="filterCategory" onchange="txnPage=0;loadTransactions()" class="topbar-select" style="flex:1;min-width:130px">
             <option value="">All Categories</option>
           </select>
         </div>
@@ -2116,11 +2122,13 @@ function renderRecentTxns(txns) {
 
 // ── Transactions ───────────────────────────────────────────────────────────
 async function loadTransactions() {
-  const acc = document.getElementById('filterAccount').value;
-  const cat = document.getElementById('filterCategory').value;
+  const acc  = document.getElementById('filterAccount').value;
+  const cat  = document.getElementById('filterCategory').value;
+  const type = document.getElementById('filterType').value;
   let url = `/api/transactions?month=${curMonth}&year=${curYear}&limit=${LIMIT}&offset=${txnPage * LIMIT}`;
-  if (acc) url += `&account_id=${acc}`;
-  if (cat) url += `&category_id=${cat}`;
+  if (acc)  url += `&account_id=${acc}`;
+  if (cat)  url += `&category_id=${cat}`;
+  if (type) url += `&type=${type}`;
   const data = await api(url);
   txnTotal = data.total;
   const tbody = document.getElementById('txnTableBody');
